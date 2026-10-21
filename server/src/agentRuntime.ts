@@ -487,11 +487,15 @@ export class AgentRuntime {
       // is live. Restoring them directly would resurrect immortal characters
       // (also skips stale entries written by older builds that persisted them).
       if (p.leadAgentId !== undefined && !p.teamName) continue;
-      try {
-        if (!fs.existsSync(p.jsonlFile)) continue;
-      } catch {
-        continue;
-      }
+      // A live transcript is what rebinds the 1s file watcher. Hooks-only
+      // agents (created purely from provider pushes — Hermes has no
+      // transcript the office reads) have none by definition, so the
+      // transcript gate must not prune them: their events flow over the
+      // wire and restore only needs to re-register the session route.
+      // Agents WITH a transcript keep the old contract exactly: a deleted
+      // jsonlFile means the session was cleaned up; prune the stale record.
+      const transcriptLive = !!p.jsonlFile && fs.existsSync(p.jsonlFile);
+      if (!p.hooksOnly && !transcriptLive) continue;
       if (this.store.has(p.id)) {
         this.knownJsonlFiles.add(p.jsonlFile);
         if (p.id > maxId) maxId = p.id;
@@ -502,6 +506,7 @@ export class AgentRuntime {
         id: p.id,
         sessionId: p.sessionId || path.basename(p.jsonlFile, '.jsonl'),
         isExternal: true,
+        hooksOnly: p.hooksOnly,
         projectDir: p.projectDir,
         jsonlFile: p.jsonlFile,
         // Live spawn ids survive the restart so the 1s scan can re-adopt the
@@ -521,27 +526,33 @@ export class AgentRuntime {
       this.store.set(p.id, agent);
       this.knownJsonlFiles.add(p.jsonlFile);
 
-      try {
-        const stat = fs.statSync(p.jsonlFile);
-        agent.fileOffset = stat.size;
-        startFileWatching(
-          p.id,
-          p.jsonlFile,
-          this.store,
-          this.fileWatchers,
-          this.pollingTimers,
-          this.waitingTimers,
-          this.permissionTimers,
-        );
-      } catch {
-        /* ignore stat errors on restore */
+      // Watchers only for agents that actually have a transcript to watch;
+      // a hooks-only agent's liveness signal is its provider's push stream.
+      if (transcriptLive) {
+        try {
+          const stat = fs.statSync(p.jsonlFile);
+          agent.fileOffset = stat.size;
+          startFileWatching(
+            p.id,
+            p.jsonlFile,
+            this.store,
+            this.fileWatchers,
+            this.pollingTimers,
+            this.waitingTimers,
+            this.permissionTimers,
+          );
+        } catch {
+          /* ignore stat errors on restore */
+        }
       }
 
       this.registerAgent(agent.sessionId, agent.id);
 
       if (p.id > maxId) maxId = p.id;
       console.log(
-        `[Pixel Agents] Restored external agent ${p.id} -> ${path.basename(p.jsonlFile)}`,
+        `[Pixel Agents] Restored external agent ${p.id} -> ${
+          p.hooksOnly ? p.sessionId || 'hooks-only' : path.basename(p.jsonlFile)
+        }`,
       );
     }
 
