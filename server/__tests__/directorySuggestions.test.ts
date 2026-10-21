@@ -21,6 +21,7 @@ import {
 describe('directorySuggestions', () => {
   let tempHome: string;
   let originalHome: string | undefined;
+  let originalProfile: string | undefined;
   /** Stands in for ~/.claude/projects: one subdirectory per session location. */
   let sessionRoot: string;
 
@@ -32,7 +33,10 @@ describe('directorySuggestions', () => {
   beforeEach(() => {
     tempHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-suggest-test-')));
     originalHome = process.env.HOME;
+    originalProfile = process.env.USERPROFILE;
     process.env.HOME = tempHome;
+    process.env.USERPROFILE = tempHome;
+    // win32 os.homedir() reads USERPROFILE, not HOME (see cli.test's dual stub) — mirror it.
     sessionRoot = path.join(tempHome, 'sessions');
     fs.mkdirSync(sessionRoot);
   });
@@ -42,6 +46,11 @@ describe('directorySuggestions', () => {
       delete process.env.HOME;
     } else {
       process.env.HOME = originalHome;
+    }
+    if (originalProfile === undefined) {
+      delete process.env.USERPROFILE;
+    } else {
+      process.env.USERPROFILE = originalProfile;
     }
     fs.rmSync(tempHome, { recursive: true, force: true });
   });

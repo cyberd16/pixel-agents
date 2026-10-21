@@ -63,6 +63,7 @@ function createTestAgent(overrides: Partial<AgentState> = {}): AgentState {
 describe('clientMessageHandler: areas + carpet wire ordering', () => {
   let tempHome: string;
   let originalHome: string | undefined;
+  let originalProfile: string | undefined;
   let store: AgentStateStore;
   let sent: Array<Record<string, unknown>>;
   let ctx: ClientMessageContext;
@@ -76,7 +77,10 @@ describe('clientMessageHandler: areas + carpet wire ordering', () => {
   beforeEach(() => {
     tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-cmh-test-'));
     originalHome = process.env.HOME;
+    originalProfile = process.env.USERPROFILE;
     process.env.HOME = tempHome;
+    process.env.USERPROFILE = tempHome;
+    // win32 os.homedir() reads USERPROFILE, not HOME (see cli.test's dual stub) — mirror it.
 
     store = new AgentStateStore();
     store.setAdapter(new FileStateAdapter({ namespace: 'standalone' }));
@@ -89,6 +93,16 @@ describe('clientMessageHandler: areas + carpet wire ordering', () => {
       delete process.env.HOME;
     } else {
       process.env.HOME = originalHome;
+    }
+    if (originalProfile === undefined) {
+      delete process.env.USERPROFILE;
+    } else {
+      process.env.USERPROFILE = originalProfile;
+    }
+    if (originalProfile === undefined) {
+      delete process.env.USERPROFILE;
+    } else {
+      process.env.USERPROFILE = originalProfile;
     }
     store.dispose();
     fs.rmSync(tempHome, { recursive: true, force: true });
@@ -432,6 +446,7 @@ describe('clientMessageHandler: areas + carpet wire ordering', () => {
 describe('clientMessageHandler: saveAgentSeats palette sync', () => {
   let tempHome: string;
   let originalHome: string | undefined;
+  let originalProfile: string | undefined;
   let store: AgentStateStore;
   let sent: Array<Record<string, unknown>>;
   let ctx: ClientMessageContext;
@@ -445,7 +460,10 @@ describe('clientMessageHandler: saveAgentSeats palette sync', () => {
   beforeEach(() => {
     tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-cmh-seats-'));
     originalHome = process.env.HOME;
+    originalProfile = process.env.USERPROFILE;
     process.env.HOME = tempHome;
+    // win32 os.homedir() reads USERPROFILE, not HOME (see cli.test's dual stub) — mirror it.
+    process.env.USERPROFILE = tempHome;
 
     store = new AgentStateStore();
     store.setAdapter(new FileStateAdapter({ namespace: 'standalone' }));
@@ -458,6 +476,11 @@ describe('clientMessageHandler: saveAgentSeats palette sync', () => {
       delete process.env.HOME;
     } else {
       process.env.HOME = originalHome;
+    }
+    if (originalProfile === undefined) {
+      delete process.env.USERPROFILE;
+    } else {
+      process.env.USERPROFILE = originalProfile;
     }
     store.dispose();
     fs.rmSync(tempHome, { recursive: true, force: true });
@@ -624,6 +647,7 @@ describe('clientMessageHandler: saveAgentSeats palette sync', () => {
 describe('clientMessageHandler: standalone terminal control plane', () => {
   let tempHome: string;
   let originalHome: string | undefined;
+  let originalProfile: string | undefined;
   let store: AgentStateStore;
   let runtime: AgentRuntime;
   let sent: Array<Record<string, unknown>>;
@@ -704,7 +728,10 @@ describe('clientMessageHandler: standalone terminal control plane', () => {
   beforeEach(() => {
     tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-cmh-term-test-'));
     originalHome = process.env.HOME;
+    originalProfile = process.env.USERPROFILE;
     process.env.HOME = tempHome;
+    // win32 os.homedir() reads USERPROFILE, not HOME (see cli.test's dual stub) — mirror it.
+    process.env.USERPROFILE = tempHome;
 
     store = new AgentStateStore();
     store.setAdapter(new FileStateAdapter({ namespace: 'standalone' }));
@@ -719,6 +746,11 @@ describe('clientMessageHandler: standalone terminal control plane', () => {
       delete process.env.HOME;
     } else {
       process.env.HOME = originalHome;
+    }
+    if (originalProfile === undefined) {
+      delete process.env.USERPROFILE;
+    } else {
+      process.env.USERPROFILE = originalProfile;
     }
     runtime.dispose();
     store.dispose();
@@ -1186,13 +1218,17 @@ describe('clientMessageHandler: standalone terminal control plane', () => {
 describe('clientMessageHandler: read-only (untokened) clients', () => {
   let tempHome: string;
   let originalHome: string | undefined;
+  let originalProfile: string | undefined;
   let store: AgentStateStore;
   let sent: Array<Record<string, unknown>>;
 
   beforeEach(() => {
     tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-cmh-readonly-'));
     originalHome = process.env.HOME;
+    originalProfile = process.env.USERPROFILE;
     process.env.HOME = tempHome;
+    // win32 os.homedir() reads USERPROFILE, not HOME (see cli.test's dual stub) — mirror it.
+    process.env.USERPROFILE = tempHome;
     store = new AgentStateStore();
     store.setAdapter(new FileStateAdapter({ namespace: 'standalone' }));
     sent = [];
@@ -1200,6 +1236,7 @@ describe('clientMessageHandler: read-only (untokened) clients', () => {
 
   afterEach(() => {
     process.env.HOME = originalHome;
+    process.env.USERPROFILE = originalProfile;
     fs.rmSync(tempHome, { recursive: true, force: true });
   });
 
