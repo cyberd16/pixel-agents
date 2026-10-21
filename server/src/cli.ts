@@ -32,7 +32,12 @@ import {
   WILDCARD_HOSTNAMES,
 } from './constants.js';
 import { FileStateAdapter } from './fileStateAdapter.js';
-import { claudeProvider, copyHookScript, hookProviderById } from './providers/index.js';
+import {
+  claudeProvider,
+  copyHookScript,
+  hookProviderById,
+  hookProviders,
+} from './providers/index.js';
 import { PixelAgentsServer } from './server.js';
 import { PtySessionManager } from './terminal/ptySessionManager.js';
 import { isLoopbackHost, normalizeHostname } from './wsAuth.js';
@@ -391,6 +396,44 @@ async function main(): Promise<void> {
       console.log(
         '[Pixel Agents] Hooks disabled — enable "Instant Detection (Hooks)" in the UI settings to install them.',
       );
+    }
+
+    // Same startup install for every OTHER registered provider (Hermes...).
+    // Re-installing every boot is load-bearing, not redundancy: the
+    // standalone picks a fresh port and token per process unless --port pins
+    // it, so a provider whose credential rides its own config (Hermes'
+    // hooks.outbound url) must be re-pointed exactly like Claude's registry
+    // file is re-read by its hook script. The Claude block above keeps its
+    // bespoke shape (script copy, pre-consent migration) untouched.
+    for (const provider of hookProviders) {
+      if (provider.id === claudeProvider.id) continue;
+      if (!getHooksEnabled(provider.id)) {
+        continue; // user turned this row off; the Settings log line for Claude above already explains the pattern
+      }
+      let available = true;
+      try {
+        available = provider.isAvailable?.() ?? true;
+      } catch {
+        available = true; // a throwing probe must not hide an integration
+      }
+      if (!available) continue; // CLI not on this machine: silently irrelevant
+      let consent = getHooksConsent(provider.id) === 'granted';
+      if (!consent && (await provider.areHooksInstalled().catch(() => false))) {
+        grantHooksConsent(provider.id);
+        consent = true; // pre-consent install migration, same policy as Claude
+      }
+      if (!consent) {
+        console.log(
+          `[Pixel Agents] ${provider.displayName} hooks not installed: modifying ${provider.displayName}'s own settings needs one-time approval — open the URL below to review and approve it.`,
+        );
+        continue;
+      }
+      try {
+        await provider.installHooks(`http://127.0.0.1:${config.port}`, config.token);
+        console.log(`[Pixel Agents] ${provider.displayName} hooks installed`);
+      } catch (err) {
+        console.error(`[Pixel Agents] ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     // Start scanning for external sessions (Claude running in user's terminal)

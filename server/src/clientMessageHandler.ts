@@ -454,12 +454,40 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
   // them.
   send({ type: 'officeAccess', readOnly: ctx.privileged !== true });
 
-  // 1. Provider capabilities (must arrive before any agent messages)
-  send({
-    type: 'providerCapabilities',
-    readingTools: [...claudeProvider.readingTools],
-    subagentToolNames: [...claudeProvider.subagentToolNames],
+  // 1. Provider capabilities (must arrive before any agent messages) — the
+  // union across the providers that report themselves AVAILABLE on this
+  // machine. Union is lossless: each provider's tool-name space belongs to a
+  // different CLI (Claude's PascalCase `Read`/`Grep` vs Hermes' snake_case
+  // `read_file`/`search_files`), so merging the sets cannot mis-classify a
+  // tool from either provider. `providers` is the list Settings renders as
+  // one hooks row per integration; an unavailable provider is absent from
+  // every three fields, so the UI cannot offer a hook it has no way to see.
+  // Synchronous like every other handshake message: availability probes are
+  // declared SYNC on HookProvider precisely so this ordering never wobbles.
+  // A provider whose probe THROWS counts as available: a flaky check must
+  // never silently hide an integration.
+  const availableProviders = hookProviders.filter((provider) => {
+    if (!provider.isAvailable) return true;
+    try {
+      return provider.isAvailable();
+    } catch {
+      return true;
+    }
   });
+  {
+    const readingTools = new Set<string>();
+    const subagentToolNames = new Set<string>();
+    for (const provider of availableProviders) {
+      for (const t of provider.readingTools) readingTools.add(t);
+      for (const t of provider.subagentToolNames) subagentToolNames.add(t);
+    }
+    send({
+      type: 'providerCapabilities',
+      readingTools: [...readingTools],
+      subagentToolNames: [...subagentToolNames],
+      providers: availableProviders.map((p) => ({ id: p.id, displayName: p.displayName })),
+    });
+  }
 
   // 1b. Terminal availability. Gates the whole terminal UI (the + Agent button
   // and the drawer), so it must land before the client can act on agents.
@@ -528,6 +556,16 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
   // synchronous handshake; the webview's default (not installed) is the safe
   // assumption until each arrives. One status + at most one ask PER PROVIDER.
   for (const provider of hookProviders) {
+    // Availability first (SYNC probe — see HookProvider.isAvailable): a CLI
+    // that is not on this machine gets NO status message and NO consent ask
+    // (the row is also absent from capabilities.providers, so Settings never
+    // shows it). A throwing probe counts as available — hiding beats erroring
+    // silently.
+    try {
+      if (provider.isAvailable && !provider.isAvailable()) continue;
+    } catch {
+      /* throwing probe => treat as available, fall through to the ask path */
+    }
     // One provider's unreadable settings file must degrade to
     // installed=false (matching the executor's fail-closed read: no choice
     // ever uninstalls on a guess) rather than surface as an unhandled
