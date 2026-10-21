@@ -125,8 +125,12 @@ interface ExtensionMessageState {
   setHooksEnabled: (v: boolean) => void;
   /** Actual install state per provider (hooksStatus messages) — absent/false
    *  while first-run consent is pending, unlike hooksEnabled which defaults
-   *  true. Keyed by providerId; today's Settings checkbox reads 'claude'. */
+   *  true. Keyed by providerId; Settings renders one hooks row per provider. */
   hooksInstalled: Record<string, boolean>;
+  /** Hook providers available on this machine (providerCapabilities.providers).
+   *  The row list SettingsModal renders; [] on a single-provider server, where
+   *  Settings falls back to the legacy single Claude row. */
+  hookProviders: { id: string; displayName: string }[];
   /** Bumped per provider on every hooksStatus message. `hooksInstalled` alone cannot say "the server answered": a
    *  failed install re-reports the `false` already held, so no effect runs. The Intro needs the ARRIVAL to tell a
    *  pending install from a failed one, per provider — A's status is never a verdict on B's install. */
@@ -208,6 +212,9 @@ export function useExtensionMessages(
   const [hooksEnabled, setHooksEnabled] = useState(true);
   const [hooksInstalled, setHooksInstalled] = useState<Record<string, boolean>>({});
   const [hooksStatusSeq, setHooksStatusSeq] = useState<Record<string, number>>({});
+  // Display registry from providerCapabilities.providers ([] until a
+  // multi-provider server answers; an older server never sends the field).
+  const [hookProviders, setHookProviders] = useState<{ id: string; displayName: string }[]>([]);
   const [hooksInfoShown, setHooksInfoShown] = useState(true);
   // FIFO of pending consent asks, at most one per provider (a re-ask replaces that provider's entry in place). The
   // HEAD is what the Intro renders; answering, dismissing, or mooting it advances to the next provider's ask rather
@@ -285,6 +292,11 @@ export function useExtensionMessages(
           readingTools: msg.readingTools,
           subagentToolNames: msg.subagentToolNames,
         });
+        // The display registry of providers available on THIS machine (a
+        // single-provider server omits the field; those builds only ever had
+        // Claude, and the Settings fallback below renders the legacy row for
+        // exactly that case).
+        setHookProviders(msg.providers ?? []);
         return;
       }
 
@@ -894,6 +906,7 @@ export function useExtensionMessages(
     setGhostHeadlessAgents: applyGhostHeadlessAgents,
     hooksEnabled,
     hooksInstalled,
+    hookProviders,
     hooksStatusSeq,
     setHooksEnabled,
     hooksInfoShown,
