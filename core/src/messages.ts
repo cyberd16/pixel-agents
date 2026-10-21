@@ -81,6 +81,12 @@ export interface ProviderCapabilities {
   type: 'providerCapabilities';
   readingTools: string[];
   subagentToolNames: string[];
+  providers?: ProviderDisplayEntry[];
+}
+
+export interface ProviderDisplayEntry {
+  id: string;
+  displayName: string;
 }
 
 export interface AgentCreated {

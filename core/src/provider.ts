@@ -73,6 +73,19 @@ export interface HookProvider {
    *  / TeamProvider / HookProvider. Start at 1. */
   readonly protocolVersion: number;
 
+  /** Whether this provider's CLI is present on THIS machine right now. Surfaces
+   *  use it to stay silent about tools the user does not have: the webviewReady
+   *  consent loop skips unavailable providers (no status, no first-run ask),
+   *  and the capabilities broadcast lists only available ones so Settings rows
+   *  cannot offer a nonexistent integration. SYNC by contract — the handshake
+   *  message order is a wire invariant and cannot wait on a promise; a
+   *  provider needing an expensive probe (spawn, network) caches its answer.
+   *  Undefined = always available (the conservative default: a provider
+   *  without this member behaves exactly as before the member existed). A
+   *  THROWING probe counts as available: a flaky check must never silently
+   *  hide an integration the user already uses. */
+  isAvailable?(): boolean;
+
   /** Normalize a raw hook event payload into an AgentEvent.
    *  Each CLI sends different JSON (Claude: snake_case, Copilot: camelCase, etc.)
    *  The provider translates to the common AgentEvent format.
