@@ -368,11 +368,13 @@ export class HookEventHandler {
         // identical for both (agentToolDone + clear currentHookToolId), so one branch suffices.
         return this.handlePostToolUse(agent, agentId);
       case 'subagentStart':
-        return provider.team
-          ? this.handleSubagentStart(event, agent, agentId, provider)
-          : undefined;
+        // Not team-gated: a provider without Agent Teams can still correlate
+        // sub-agents (Hermes renders delegate_task children through its
+        // session scanner). The teammate branch INSIDE the handler remains
+        // team-only, so Claude's routing is untouched.
+        return this.handleSubagentStart(event, normEvent, agent, agentId, provider);
       case 'subagentEnd':
-        return provider.team ? this.handleSubagentStop(agent, agentId, provider) : undefined;
+        return this.handleSubagentStop(normEvent, agent, agentId, provider);
       case 'permissionRequest':
         // Handles BOTH the PermissionRequest hook AND the Notification(permission_prompt)
         // hook -- normalizeHookEvent collapses them into one event kind.
@@ -550,11 +552,17 @@ export class HookEventHandler {
    */
   private handleSubagentStart(
     event: HookEvent,
+    normEvent: Extract<AgentEvent, { kind: 'subagentStart' }>,
     agent: AgentState,
     agentId: number,
     provider: HookProvider,
   ): void {
-    const agentType = provider.team?.extractTeammateNameFromEvent(event) ?? 'unknown';
+    // Team providers resolve the sub-agent's identity from the raw event and
+    // keep their historical 'unknown' fallback byte-identical; providers
+    // without teams (Hermes) put the label in the normalized toolName.
+    const agentType = provider.team
+      ? (provider.team.extractTeammateNameFromEvent(event) ?? 'unknown')
+      : (normEvent.toolName ?? 'unknown');
 
     // Decide path: teammate spawn vs basic within-turn subagent.
     // Two conditions must BOTH hold for the teammate path:
@@ -584,10 +592,28 @@ export class HookEventHandler {
         break;
       }
     }
+    // Providers WITHOUT a transcript pipeline (no sessionFilePattern — Hermes)
+    // never populate activeToolNames: their hook events ARE the record, so the
+    // in-flight hook tool becomes the parent when its name spawns sub-agents.
+    // File-backed providers (Claude) keep the JSONL-catchup contract intact —
+    // for them a miss here is a real race, not an absent pipeline.
+    if (
+      !parentToolId &&
+      provider.sessionFilePattern === undefined &&
+      agent.currentHookToolId &&
+      parentTools.has(agent.currentHookToolName ?? '')
+    ) {
+      parentToolId = agent.currentHookToolId;
+    }
     if (!parentToolId) return; // JSONL will handle it via agent_progress tool_use
 
     // Create child sub-agent character immediately (same as old behavior).
-    const subToolId = `hook-sub-${agentType}-${Date.now()}`;
+    // Stable id from the normalized event: Claude's normalizer synthesizes the
+    // historical `hook-sub-<type>-<ts>` shape; Hermes carries the child's own
+    // session id so parallel delegate children each address one chip, and a
+    // duplicated start (replayed event) re-lands the same key — the webview's
+    // subagentToolStart add is idempotent per toolId.
+    const subToolId = normEvent.toolId;
     const status = `Subtask: ${agentType}`;
 
     // Track sub-agent
@@ -622,7 +648,12 @@ export class HookEventHandler {
    *
    * For old-style Task subagents: removes the child character from the office.
    */
-  private handleSubagentStop(agent: AgentState, agentId: number, provider: HookProvider): void {
+  private handleSubagentStop(
+    normEvent: Extract<AgentEvent, { kind: 'subagentEnd' }>,
+    agent: AgentState,
+    agentId: number,
+    provider: HookProvider,
+  ): void {
     // Check if this agent has inline teammates (independent agents with leadAgentId).
     // Just mark them waiting -- SubagentStop fires per-task-iteration; teammates may
     // sit idle for minutes between lead requests before being re-invoked.
@@ -642,10 +673,44 @@ export class HookEventHandler {
       return;
     }
 
-    // Old-style within-turn subagents: find a parent tool that actually has tracked
-    // sub-agents. The `activeSubagentToolIds.has(toolId)` gate below prevents us
-    // from picking a subagent-spawning parent that already had its sub-agents
-    // cleared in the same turn.
+    // Precise per-child retirement: providers that key sub-characters by a
+    // stable id (Hermes: the child's own session id) send it instead of the
+    // 'current' group sentinel. Remove exactly that chip; when the group's
+    // last chip is done, despawn the Subtask character. This is what makes a
+    // parallel delegation survivable — children finish out of order and the
+    // group-level clear would otherwise delete still-running siblings.
+    if (normEvent.toolId !== 'current') {
+      const subToolId = normEvent.toolId;
+      let groupToolId: string | undefined;
+      for (const [toolId, subs] of agent.activeSubagentToolIds) {
+        if (subs.has(subToolId)) {
+          groupToolId = toolId;
+          break;
+        }
+      }
+      if (!groupToolId) return; // already cleared (turn end, or a duplicate stop)
+      const subs = agent.activeSubagentToolIds.get(groupToolId);
+      if (!subs) return;
+      subs.delete(subToolId);
+      agent.activeSubagentToolNames.get(groupToolId)?.delete(subToolId);
+      this.agents.broadcast({
+        type: 'subagentToolDone',
+        id: agentId,
+        parentToolId: groupToolId,
+        toolId: subToolId,
+      });
+      if (subs.size === 0) {
+        agent.activeSubagentToolIds.delete(groupToolId);
+        agent.activeSubagentToolNames.delete(groupToolId);
+        this.agents.broadcast({ type: 'subagentClear', id: agentId, parentToolId: groupToolId });
+      }
+      return;
+    }
+
+    // Old-style within-turn subagents: find a parent tool that actually has
+    // tracked sub-agents. The `activeSubagentToolIds.has(toolId)` gate below
+    // prevents us from picking a subagent-spawning parent that already had
+    // its sub-agents cleared in the same turn.
     const subagentParentTools = this.getSubagentToolSet(provider);
     let parentToolId: string | undefined;
     for (const [toolId, toolName] of agent.activeToolNames) {

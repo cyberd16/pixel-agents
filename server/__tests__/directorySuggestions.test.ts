@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DIRECTORY_SUGGESTION_HEAD_BYTES, DIRECTORY_SUGGESTION_LIMIT } from '../src/constants.js';
 import { saveUserDirectory } from '../src/directories.js';
 import {
+  collectAllDirectorySuggestions,
   collectDirectorySuggestions,
   type SuggestionProvider,
 } from '../src/directorySuggestions.js';
@@ -243,5 +244,62 @@ describe('directorySuggestions', () => {
         [],
       ),
     ).toEqual([]);
+  });
+
+  // ── collectAllDirectorySuggestions: the multi-provider answer ──────────
+  //
+  // The Directory modal used to be hardcoded to claudeProvider, so a
+  // Hermes-only machine answered with nothing — and Hermes contributes no
+  // transcript roots AT ALL, only session-store rows. These pin the store
+  // shape as a first-class answer, merged with the file walk.
+
+  /** The same deterministic clock `setLastActive` stamps transcripts with. */
+  function storeClock(minute: number): number {
+    return new Date(2026, 0, 1, 0, minute).getTime();
+  }
+
+  it('merges store-backed suggestions with the file walk, freshest first', () => {
+    const fromStore = makeDirectory('hermes-project');
+    const shared = makeDirectory('shared-project');
+    setLastActive(seedTranscript('proj-shared', shared), 1);
+
+    const storeProvider = {
+      directorySuggestions: () => [
+        { cwd: fromStore, lastActiveMs: storeClock(2) },
+        // The same directory reported by both sources: ONE entry, and the
+        // store's newer activity wins the ordering.
+        { cwd: shared, lastActiveMs: storeClock(3) },
+      ],
+    };
+
+    expect(collectAllDirectorySuggestions([provider, storeProvider], [])).toEqual([
+      shared,
+      fromStore,
+    ]);
+  });
+
+  it('a provider that throws contributes nothing and never poisons the answer', () => {
+    const project = makeDirectory('survivor-project');
+    seedTranscript('proj-survivor', project);
+    const broken = {
+      directorySuggestions: () => {
+        throw new Error('state.db is locked');
+      },
+    };
+
+    expect(collectAllDirectorySuggestions([broken, provider], [])).toEqual([project]);
+  });
+
+  it('a store entry whose directory has since been deleted is not suggested', () => {
+    const alive = makeDirectory('alive-project');
+    const gone = path.join(tempHome, 'deleted-project');
+    const storeProvider = {
+      directorySuggestions: () => [
+        { cwd: gone, lastActiveMs: storeClock(9) },
+        { cwd: alive, lastActiveMs: storeClock(1) },
+      ],
+    };
+
+    expect(collectAllDirectorySuggestions([storeProvider], [])).toEqual([alive]);
   });
 });

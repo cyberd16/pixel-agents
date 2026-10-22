@@ -192,6 +192,146 @@ describe('HookEventHandler: per-event provider routing', () => {
     expect(messages.find((m) => m.type === 'agentContextUsage')).toBeUndefined();
     expect(agent.contextTokens).toBe(4200);
   });
+
+  // ── Sub-characters for delegate_task children (scanner-born, no team) ──
+  //
+  // The dispatch used to sit behind `provider.team`, which Hermes does not
+  // implement: its children would have been invisible. These pin the
+  // push-only shape — the in-flight hook tool is the parent, the child's own
+  // session id is the chip, and retirement is per-child.
+
+  function of(type: string): Record<string, unknown>[] {
+    return messages.filter((m) => m.type === type);
+  }
+
+  function delegateInFlight(agent: AgentState): string {
+    handler.handleEvent('hermes', {
+      hook_event_name: 'pre_tool_call',
+      session_id: 'sess-h',
+      tool_name: 'delegate_task',
+      tool_input: { goal: 'fix the flaky suite' },
+    });
+    return agent.currentHookToolId!;
+  }
+
+  it('renders a delegate child as a Subtask under the in-flight tool', () => {
+    const agent = testAgent({ id: 1, sessionId: 'sess-h' });
+    agents.set(1, agent);
+    handler.registerAgent('sess-h', 1);
+    const parentToolId = delegateInFlight(agent);
+
+    // The bare delegation tool stays unrendered: hermesProvider lists
+    // delegate_task in subagentToolNames, so the sub-character IS the display.
+    expect(of('agentToolStart')).toHaveLength(0);
+
+    handler.handleEvent('hermes', {
+      hook_event_name: 'subagent_session_start',
+      session_id: 'sess-h',
+      subagent_session_id: '20261022_120000_abcdef',
+      subagent_title: 'Subagent: fix the flaky suite',
+      cwd: '/work/one',
+    });
+
+    expect(of('subagentToolStart')).toEqual([
+      {
+        type: 'subagentToolStart',
+        id: 1,
+        parentToolId,
+        toolId: 'hermes-sub-20261022_120000_abcdef',
+        status: 'Subtask: fix the flaky suite',
+      },
+    ]);
+    expect(
+      agent.activeSubagentToolIds.get(parentToolId)?.has('hermes-sub-20261022_120000_abcdef'),
+    ).toBe(true);
+  });
+
+  it('retires the finished child only, and clears the group with its last chip', () => {
+    const agent = testAgent({ id: 1, sessionId: 'sess-h' });
+    agents.set(1, agent);
+    handler.registerAgent('sess-h', 1);
+    const parentToolId = delegateInFlight(agent);
+
+    for (const kid of ['kid-a', 'kid-b', 'kid-c']) {
+      handler.handleEvent('hermes', {
+        hook_event_name: 'subagent_session_start',
+        session_id: 'sess-h',
+        subagent_session_id: kid,
+        subagent_title: `Subagent: ${kid}`,
+        cwd: '/work/one',
+      });
+    }
+    expect(of('subagentToolStart')).toHaveLength(3);
+
+    // Children finish out of order: retiring B must not despawn C.
+    handler.handleEvent('hermes', {
+      hook_event_name: 'subagent_session_end',
+      session_id: 'sess-h',
+      subagent_session_id: 'kid-b',
+    });
+    expect(of('subagentToolDone')).toEqual([
+      { type: 'subagentToolDone', id: 1, parentToolId, toolId: 'hermes-sub-kid-b' },
+    ]);
+    expect(of('subagentClear')).toHaveLength(0);
+    expect([...(agent.activeSubagentToolIds.get(parentToolId) ?? [])]).toEqual([
+      'hermes-sub-kid-a',
+      'hermes-sub-kid-c',
+    ]);
+
+    handler.handleEvent('hermes', {
+      hook_event_name: 'subagent_session_end',
+      session_id: 'sess-h',
+      subagent_session_id: 'kid-c',
+    });
+    handler.handleEvent('hermes', {
+      hook_event_name: 'subagent_session_end',
+      session_id: 'sess-h',
+      subagent_session_id: 'kid-a',
+    });
+    // The group despawns exactly once, when its last child leaves.
+    expect(of('subagentClear')).toEqual([{ type: 'subagentClear', id: 1, parentToolId }]);
+    expect(agent.activeSubagentToolIds.has(parentToolId)).toBe(false);
+
+    // A late/duplicate goodbye for a child that is already gone is silent.
+    messages.length = 0;
+    handler.handleEvent('hermes', {
+      hook_event_name: 'subagent_session_end',
+      session_id: 'sess-h',
+      subagent_session_id: 'kid-a',
+    });
+    expect(messages).toHaveLength(0);
+  });
+
+  it('stands idempotent on a replayed child birth and on a child with no group', () => {
+    const agent = testAgent({ id: 1, sessionId: 'sess-h' });
+    agents.set(1, agent);
+    handler.registerAgent('sess-h', 1);
+    const parentToolId = delegateInFlight(agent);
+
+    const birth = {
+      hook_event_name: 'subagent_session_start',
+      session_id: 'sess-h',
+      subagent_session_id: 'kid-1',
+      subagent_title: 'Subagent: one',
+      cwd: '/work/one',
+    };
+    handler.handleEvent('hermes', birth);
+    handler.handleEvent('hermes', birth);
+    // The stable chip key means a redelivery re-lands the same entry: the
+    // bookkeeping never grows, and the webview's own add is per-toolId.
+    expect(agent.activeSubagentToolIds.get(parentToolId)?.size).toBe(1);
+    expect(agent.activeSubagentToolNames.get(parentToolId)?.get('hermes-sub-kid-1')).toBe('one');
+
+    // A birth BEFORE any delegate_task is in flight has no parent to hang the
+    // chip from: the event is dropped, never attached to some other tool.
+    const other = testAgent({ id: 2, sessionId: 'sess-h2' });
+    agents.set(2, other);
+    handler.registerAgent('sess-h2', 2);
+    const before = of('subagentToolStart').length;
+    handler.handleEvent('hermes', { ...birth, session_id: 'sess-h2' });
+    expect(of('subagentToolStart')).toHaveLength(before);
+    expect(other.activeSubagentToolIds.size).toBe(0);
+  });
 });
 
 // ── hookAuth: header, loopback query, rejection branches ────────────────────

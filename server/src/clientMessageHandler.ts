@@ -18,7 +18,7 @@ import {
   type HostDirectoryEntry,
   listDirectories,
 } from './directories.js';
-import { collectDirectorySuggestions } from './directorySuggestions.js';
+import { collectAllDirectorySuggestions } from './directorySuggestions.js';
 import { hostDirectory } from './hostDirectory.js';
 import { readLayoutFromFile, writeLayoutToFile } from './layoutPersistence.js';
 import type { ConsentEffects } from './providers/hook/consentExecutor.js';
@@ -382,7 +382,10 @@ export function handleClientMessage(
         broadcast: (message) => store.broadcast(message),
         reply: send,
         suggestions: () =>
-          collectDirectorySuggestions(claudeProvider, shownHostDirectoriesFor(ctx)),
+          // Every registered provider answers: Claude walks its transcript
+          // roots, Hermes reads its session store. The old hardcoding to
+          // claudeProvider made a Hermes-only machine's modal suggest nothing.
+          collectAllDirectorySuggestions(hookProviders, shownHostDirectoriesFor(ctx)),
       });
       break;
 

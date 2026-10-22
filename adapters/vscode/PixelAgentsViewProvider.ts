@@ -39,7 +39,7 @@ import {
   type HostDirectoryEntry,
   listDirectories,
 } from '../../server/src/directories.js';
-import { collectDirectorySuggestions } from '../../server/src/directorySuggestions.js';
+import { collectAllDirectorySuggestions } from '../../server/src/directorySuggestions.js';
 import { setDirectoryNameResolver, setTerminalAdapter } from '../../server/src/fileWatcher.js';
 import type { LayoutWatcher } from '../../server/src/layoutPersistence.js';
 import {
@@ -558,7 +558,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           broadcast: (m) => this.sendOrBuffer(m),
           reply: (m) => this.sendOrBuffer(m),
           suggestions: () =>
-            collectDirectorySuggestions(claudeProvider, this.shownHostDirectories()),
+            // Same multi-provider answer as the standalone office: transcript
+            // roots AND structured session stores (Hermes) suggest directories.
+            collectAllDirectorySuggestions(hookProviders, this.shownHostDirectories()),
         });
       } else if (message.type === 'setShowHostDirectories') {
         if (typeof message.enabled === 'boolean') {
@@ -827,6 +829,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         }
 
         this.runtime.startStaleCheck();
+
+        // Provider session-STORE scanners (Hermes' state.db + lease registry):
+        // hook-less adoption, sub-agent correlation, and the only liveness
+        // reaper for characters whose source process died without a goodbye.
+        this.runtime.startSessionScanners();
 
         // Load furniture assets BEFORE sending layout
         (async () => {

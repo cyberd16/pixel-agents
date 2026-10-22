@@ -447,6 +447,13 @@ async function main(): Promise<void> {
       runtime.startStaleCheck();
     }
 
+    // Provider session-STORE scanners (Hermes' state.db + lease registry). Not
+    // tied to a workspace directory like the JSONL scan above: structured stores
+    // describe the whole machine, and this is also the ONLY liveness reaper for
+    // hook-adopted Hermes characters (a SIGKILLed CLI/app fires no finalize —
+    // tier-2 ghost fix).
+    runtime.startSessionScanners();
+
     // The URL the operator opens has to be REACHABLE (a wildcard bind address
     // is a bind target, not an address you can browse to — `--host 0.0.0.0`
     // used to print a dead `http://0.0.0.0:PORT`) and has to carry the token,
