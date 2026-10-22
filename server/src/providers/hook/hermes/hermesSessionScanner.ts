@@ -51,6 +51,8 @@
 import type { SessionScanner, SessionScannerContext } from '../../../../../core/src/provider.js';
 import {
   HERMES_SCANNER_INTERVAL_MS,
+  HERMES_SCANNER_LEASE_REGISTER_GRACE_MS,
+  HERMES_SCANNER_ORPHAN_GRACE_MS,
   HERMES_SCANNER_REAP_REASON,
   HERMES_SCANNER_REAP_TOMBSTONES,
   HERMES_SCANNER_REPLAY_LIMIT,
@@ -111,6 +113,9 @@ interface SessionWatch {
   pendingCalls: Map<string, string>;
   /** Child rows remember their parent for the end event's routing. */
   parentId?: string;
+  /** Tick time at which this session's lease was first seen ABSENT (null =
+   *  present, or not judged yet). Drives the orphan reaping grace. */
+  leaseAbsentSince: number | null;
 }
 
 /** Keys of tool arguments the office's status renderer reads (see
@@ -194,6 +199,7 @@ export function createHermesSessionScanner(
         cursor: -1,
         pendingCalls: new Map(),
         parentId,
+        leaseAbsentSince: null,
       };
       watches.set(id, watch);
     }
@@ -255,6 +261,9 @@ export function createHermesSessionScanner(
     const watch = watchOf(row.id, 'root');
     const verdict = verdictFor(row.id, leaseBySession);
     const liveDriven = ctx.isSessionLive(row.id);
+    const now = deps.nowMs();
+    // A lease that came back cancels any orphan verdict outright.
+    if (leaseBySession.has(row.id)) watch.leaseAbsentSince = null;
 
     if (verdict === 'dead') {
       watches.delete(row.id);
@@ -265,6 +274,30 @@ export function createHermesSessionScanner(
         emitReap(row.id);
         markReaped(row.id);
       }
+      return;
+    }
+
+    if (verdict === 'unknown' && watch.leaseAbsentSince === null) {
+      // No lease row. A live Hermes process keeps one, and Hermes' own janitor
+      // prunes entries whose pid is gone, so for a session the desk still
+      // holds this IS death by the store's own standard - but not before the
+      // registry had a chance to be written (young rows) and not on the first
+      // tick we happen to catch mid-write (the grace below).
+      if (
+        now - Math.max(row.startedAtMs, serverStartMs) >=
+        HERMES_SCANNER_LEASE_REGISTER_GRACE_MS
+      ) {
+        watch.leaseAbsentSince = now;
+      }
+    } else if (
+      verdict === 'unknown' &&
+      now - watch.leaseAbsentSince! >= HERMES_SCANNER_ORPHAN_GRACE_MS &&
+      (watch.observed || liveDriven) &&
+      !reapedIds.has(row.id)
+    ) {
+      watches.delete(row.id);
+      emitReap(row.id);
+      markReaped(row.id);
       return;
     }
 

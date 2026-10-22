@@ -91,7 +91,7 @@ function makeStore(world: FakeWorld): HermesSessionStore {
   };
 }
 
-function buildScanner(world: FakeWorld, seedLive: string[] = []) {
+function buildScanner(world: FakeWorld, seedLive: string[] = [], intervalMs = 1) {
   const emitted: Record<string, unknown>[] = [];
   const live = new Set<string>(seedLive);
   const trackedDirs = new Set<string>();
@@ -124,7 +124,7 @@ function buildScanner(world: FakeWorld, seedLive: string[] = []) {
     readLeases: () => world.leases,
     pidAlive: (pid) => !world.deadPids.has(pid),
     nowMs: () => Date.now(),
-    intervalMs: 1,
+    intervalMs,
   };
 
   const scanner = createHermesSessionScanner(ctx, deps);
@@ -136,9 +136,9 @@ function buildScanner(world: FakeWorld, seedLive: string[] = []) {
     setWatchAll: (value: boolean) => {
       watchAll = value;
     },
-    /** Fire exactly one interval. */
-    tick: () => {
-      vi.advanceTimersByTime(1);
+    /** Fire one interval (or `times` of them, for the grace-window tests). */
+    tick: (times = 1) => {
+      vi.advanceTimersByTime(intervalMs * times);
     },
   };
 }
@@ -314,6 +314,59 @@ describe('hermesSessionScanner liveness (tier-2 ghost reaping)', () => {
     s1.missing = true;
     h.tick();
     expect(eventsOf(h.emitted, 'on_session_finalize')).toHaveLength(1);
+  });
+
+  // ── The pruned-lease ghost: no lease row at all ───────────────────────
+  // A hard-killed process leaves its LIVE store row behind, and Hermes' own
+  // registry janitor drops the lease entry when it next writes the file — so
+  // the desk can be holding a character whose only remaining trace is a row
+  // nothing owns anymore. Observed over a 5 s tick, with the 60 s registration
+  // grace and the 90 s orphan grace from constants.ts.
+
+  const ORPHAN_TICKS = 35; // 175 s: past both graces
+
+  it('reaps a desk-held session whose lease vanished entirely', () => {
+    const world = emptyWorld();
+    world.sessions.set('s1', { ...session({ id: 's1' }), endedAt: null });
+    world.leases = []; // pruned by the store's janitor; the row stayed live
+    const h = buildScanner(world, ['s1'], 5_000);
+    h.scanner.start();
+    h.tick(10); // 50 s: inside the registration grace, nothing judged yet
+    expect(eventsOf(h.emitted, 'on_session_finalize')).toHaveLength(0);
+
+    h.tick(ORPHAN_TICKS);
+    const finalizes = eventsOf(h.emitted, 'on_session_finalize');
+    expect(finalizes).toHaveLength(1);
+    expect((finalizes[0].extra as Record<string, unknown>).platform).toBe(
+      HERMES_SCANNER_REAP_REASON,
+    );
+
+    h.tick(10); // and never a second time
+    expect(eventsOf(h.emitted, 'on_session_finalize')).toHaveLength(1);
+  });
+
+  it('a lease that comes back cancels the orphan verdict', () => {
+    const world = emptyWorld();
+    world.sessions.set('s1', { ...session({ id: 's1' }), endedAt: null });
+    const h = buildScanner(world, ['s1'], 5_000);
+    h.scanner.start();
+    h.tick(20); // clock running (lease absent)
+    world.leases = [{ sessionId: 's1', pid: 111, surface: 'cli' }]; // re-acquired
+    h.tick(ORPHAN_TICKS + 20);
+    expect(eventsOf(h.emitted, 'on_session_finalize')).toHaveLength(0);
+  });
+
+  it('says nothing forever about an orphan the desk does not hold', () => {
+    // The store is full of sessions that ended long before finalize was
+    // written (130 on a real machine). They are not characters: silence.
+    const world = emptyWorld();
+    world.sessions.set('s1', { ...session({ id: 's1' }), endedAt: null });
+    const h = buildScanner(world, [], 5_000);
+    h.trackedDirs.add('/work/one');
+    h.scanner.start();
+    h.tick(80);
+    expect(eventsOf(h.emitted, 'on_session_finalize')).toHaveLength(0);
+    expect(eventsOf(h.emitted, 'on_session_start')).toHaveLength(0);
   });
 });
 

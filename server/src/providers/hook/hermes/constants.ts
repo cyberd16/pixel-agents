@@ -157,6 +157,18 @@ export const HERMES_SCANNER_SILENT_SOURCES: ReadonlySet<string> = new Set([
   'unknown',
 ]);
 
+/** Grace before a desk-held session with NO lease row at all is treated as
+ *  dead. While a Hermes process lives it keeps its lease, and Hermes' own
+ *  registry janitor prunes entries whose pid is gone — so an absent lease on
+ *  a character the desk still holds is death judged by the store itself. The
+ *  delay only covers the race where a lease has been re-acquired (or pruned)
+ *  between two of our ticks; a lease that reappears cancels the verdict. */
+export const HERMES_SCANNER_ORPHAN_GRACE_MS = 90_000;
+
+/** A session younger than this may simply not have written its lease yet, so
+ *  its absence proves nothing and the orphan clock never starts. */
+export const HERMES_SCANNER_LEASE_REGISTER_GRACE_MS = 60_000;
+
 // ── Session-store scanner timing ─────────────────────────────────────
 
 /** Scanner poll period. Liveness (ghost reaping after a non-graceful kill)
