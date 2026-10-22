@@ -142,7 +142,11 @@ export interface HookProvider {
   readonly sessionFilePattern?: string;
   /** Parse one line of a transcript file into an AgentEvent. */
   parseTranscriptLine?(line: string): AgentEvent | null;
-  /** Build CLI launch command for +Agent button. */
+  /** Build CLI launch command for +Agent button. `sessionId` is the id the
+   *  office generated (Claude honours it via --session-id). Providers whose
+   *  session-id format is an upstream contract they mint themselves (Hermes)
+   *  may mint their own and return it as `sessionId`: the launcher then
+   *  registers THAT id, so hook events for the spawned process route to it. */
   buildLaunchCommand?(
     sessionId: string,
     cwd: string,
@@ -151,6 +155,7 @@ export interface HookProvider {
     command: string;
     args: string[];
     env?: Record<string, string>;
+    sessionId?: string;
   };
 
   // ── Optional team/subagent extension (Agent Teams on Claude; empty for single-agent CLIs) ──
