@@ -19,8 +19,11 @@
  *    runs once per user message; the event is emitted from
  *    `agent/turn_finalizer.py`), so it maps to `turnEnd`, not `sessionEnd`.
  *    The real session close is `on_session_finalize`.
- *  - Approval events are intentionally not subscribed (no routable
- *    session_id in their envelope) — see HERMES_HOOK_EVENTS.
+ *  - Approval events normalize to `permissionRequest` /
+ *    `permissionResolved`: `_fire_approval_hook` forwards the bound session
+ *    id into the envelope's top level (routable), and an approval site
+ *    without a bound session posts an empty id — dropped by the guard below,
+ *    never a bubble without an owner.
  *  - Hermes sub-agents run their own top-level sessions and fire their own
  *    lifecycle, so they are adopted as full characters instead of Claude-style
  *    ghosts — subagentToolNames is empty by design.
@@ -122,9 +125,9 @@ function normalizeHookEvent(
   const sessionId = raw.session_id;
   // Hermes' envelope builder (`_payload_fields`) resolves the top-level
   // session_id from kwargs.session_id/parent_session_id and falls back to ''
-  // when an event carries only a session_key — those events (approvals,
-  // agent_loop_stopped) are not routable to an agent and are also absent from
-  // HERMES_HOOK_EVENTS, but a stale or hand-edited subscription must still
+  // when an event carries only a session_key — those events (agent_loop_stopped,
+  // approval sites fired without a bound observability context) are not
+  // routable to an agent, and a stale or hand-edited subscription must still
   // drop cleanly here rather than mint an agent for session "".
   if (typeof eventName !== 'string' || typeof sessionId !== 'string' || sessionId === '')
     return null;
@@ -165,11 +168,25 @@ function normalizeHookEvent(
       // contract as Claude's PostToolUse/PostToolUseFailure collapse).
       return { sessionId, event: { kind: 'toolEnd', toolId: 'current' } };
 
+    case 'pre_approval_request':
+      // The dangerous-command / edit-approval gate is waiting on a human.
+      // Same visual contract as Claude's PermissionRequest hook.
+      return { sessionId, event: { kind: 'permissionRequest' } };
+
+    case 'post_approval_response':
+      // The human answered (approve/deny/timeout — all of them resolve the
+      // gate). Claude has no matching hook: its JSONL watcher broadcasts the
+      // clear when the tool_result lands. A push-only provider must carry the
+      // resolution itself, or the bubble would hang until the turn's
+      // agentToolsClear.
+      return { sessionId, event: { kind: 'permissionResolved' } };
+
     case 'on_session_end': {
       // Fires per turn after the tool loop (turn_finalizer). interrupted /
-      // failed turns end visually like Done: Hermes' retry/queue machinery has
-      // no "stuck, bubble the user" analogue in this event set (approvals are
-      // unsubscribed, see HERMES_HOOK_EVENTS rationale).
+      // failed turns end visually like Done: Hermes' retry/queue machinery
+      // has no "stuck, bubble the user" analogue beyond the approval and
+      // human-input events, which arrive as their own permissionRequest /
+      // awaitingInput signals before this turn end.
       if (isSilentSession(raw)) return null;
       return { sessionId, event: { kind: 'turnEnd' } };
     }
@@ -297,11 +314,12 @@ export const hermesProvider: HookProvider = {
   isAvailable: hermesHomeExists,
 
   formatToolStatus,
-  // Hermes' approvals (dangerous-command confirms) surface through
-  // pre_approval_request, which is not routable in v1 (no session_id) — the
-  // exempt set exists to stop the permission timer chasing tools that never
-  // ask; clarify/react are Hermes' user-blocking tools and never gate on the
-  // office's permission bubble either.
+  // Hermes' approvals ride the routable pre_approval_request hook, so the
+  // timer-driven fallback below is only a backstop. The exempt set stops the
+  // permission timer chasing tools that never gate: delegate_task children
+  // are full sessions with their own events, clarify/react_to_message are
+  // Hermes' user-blocking tools and surface through on_human_input_request
+  // instead of the office's permission bubble.
   permissionExemptTools: new Set(['delegate_task', 'clarify', 'react_to_message']),
   // Empty by design: Hermes sub-agents are full sessions (see file header).
   subagentToolNames: new Set<string>(),

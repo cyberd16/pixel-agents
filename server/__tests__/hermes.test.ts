@@ -166,6 +166,33 @@ describe('hermesProvider', () => {
       expect(out!.event).toEqual({ kind: 'turnEnd', awaitingInput: true });
     });
 
+    it('maps pre_approval_request to permissionRequest (the approval bubble)', () => {
+      const out = hermesProvider.normalizeHookEvent(
+        envelope('pre_approval_request', {
+          tool_name: 'terminal',
+          extra: { command: 'rm -rf /var', surface: 'cli', session_key: 'cli:1' },
+        }),
+      );
+      expect(out!.event).toEqual({ kind: 'permissionRequest' });
+    });
+
+    it('maps post_approval_response to permissionResolved (clears the bubble)', () => {
+      const out = hermesProvider.normalizeHookEvent(
+        envelope('post_approval_response', { extra: { choice: 'deny', surface: 'cli' } }),
+      );
+      expect(out!.event).toEqual({ kind: 'permissionResolved' });
+    });
+
+    it('drops an approval envelope fired without a bound session (empty session_id)', () => {
+      // Approval sites outside a bound observability context post '' — the
+      // empty-id guard must own the drop, not a provider-specific branch.
+      expect(
+        hermesProvider.normalizeHookEvent(
+          envelope('pre_approval_request', { session_id: '', extra: { session_key: 'web:1' } }),
+        ),
+      ).toBeNull();
+    });
+
     it('maps on_session_finalize to sessionEnd', () => {
       const out = hermesProvider.normalizeHookEvent(
         envelope('on_session_finalize', { extra: { platform: 'tui' } }),

@@ -376,6 +376,11 @@ export class HookEventHandler {
         // Handles BOTH the PermissionRequest hook AND the Notification(permission_prompt)
         // hook -- normalizeHookEvent collapses them into one event kind.
         return this.handlePermissionRequest(agent, agentId);
+      case 'permissionResolved':
+        // Providers without a JSONL watcher (Hermes) carry the human's
+        // answer as its own event; Claude never emits it and keeps clearing
+        // via fileWatcher.
+        return this.handlePermissionResolved(agent, agentId);
       case 'turnEnd':
         // Handles Stop AND Notification(idle_prompt) -- both normalize to turnEnd.
         // awaitingInput discriminates them: idle_prompt sets it (-> "Waiting for
@@ -676,6 +681,19 @@ export class HookEventHandler {
         parentToolId,
       });
     }
+  }
+
+  /** Reverse of handlePermissionRequest for providers that carry the human's
+   *  answer as an event (Hermes' post_approval_response): clear the flag and
+   *  let the webview retire the bubble + tool "Needs approval" markers. The
+   *  webview's agentToolPermissionClear handler also clears sub-agent
+   *  bubbles. The inline-teammate routing of the request path is not
+   *  mirrored: teams are a Claude feature and Claude never emits this event. */
+  private handlePermissionResolved(agent: AgentState, agentId: number): void {
+    if (!agent.permissionSent) return;
+    cancelPermissionTimer(agentId, this.permissionTimers);
+    agent.permissionSent = false;
+    this.agents.broadcast({ type: 'agentToolPermissionClear', id: agentId });
   }
 
   /** Handle Stop: Claude finished responding, mark agent as waiting. */

@@ -50,6 +50,14 @@ export type AgentEvent =
     }
   | { kind: 'progress'; toolId: string; data: unknown }
   | { kind: 'permissionRequest' }
+  /**
+   * A pending permission was resolved by the human at the provider's own
+   * surface (Hermes' `post_approval_response`). The handler reverses
+   * permissionRequest's bubble. Claude never emits it — its JSONL polling
+   * broadcasts `agentToolPermissionClear` instead — so this exists for
+   * push-only providers that have no file watcher to retire the bubble.
+   */
+  | { kind: 'permissionResolved' }
   | {
       kind: 'sessionStart';
       source?: string;

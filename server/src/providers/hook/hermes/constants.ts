@@ -37,6 +37,21 @@
  *                         completed/failed/interrupted + platform in `extra`.
  *   on_session_finalize → sessionEnd (the session is closing; retires the
  *                         character the way Claude's SessionEnd does)
+ *   pre_approval_request  → permissionRequest (the "Needs approval" bubble;
+ *                         Hermes' analogue of Claude's PermissionRequest hook)
+ *   post_approval_response → permissionResolved (the human answered at the
+ *                         CLI surface — approve/deny/timeout all clear the
+ *                         bubble; Claude has no such hook and clears via its
+ *                         JSONL watcher instead)
+ *
+ *  Approval routing fact (verified against the live envelope builder):
+ *  `tools/approval_context._fire_approval_hook` promotes the bound
+ *  observability-context session_id into the hook kwargs, and
+ *  `agent/outbound_webhooks._serialize_payload` puts it at the envelope's
+ *  top level — approval events are routable like tool events. Approval sites
+ *  that fire WITHOUT a bound context post an empty session_id and are
+ *  dropped by normalizeHookEvent's guard: a bubble without an owner never
+ *  happens.
  *
  *  Deliberately NOT subscribed:
  *   - post_llm_call: also fires per turn, but `agent/turn_finalizer.py` passes
@@ -44,13 +59,10 @@
  *     would serialize the whole transcript to the endpoint on every turn,
  *     orders of magnitude more data than the office can act on. The per-turn
  *     signal we need already comes from on_session_end at near-zero cost.
- *   - pre_approval_request / post_approval_response / agent_loop_stopped:
- *     their kwargs carry `session_key`, not `session_id`, so the outbound
- *     envelope's top-level `session_id` resolves to the empty string and the
- *     event cannot be routed to an agent. (Permission bubbles therefore do not
- *     appear for Hermes sessions in v1; a Hermes-side change to surface
- *     session_id on approval hooks would light them up with zero pixel-agents
- *     code beyond adding the event name here.)
+ *   - agent_loop_stopped: its kwargs carry only `session_key` (no
+ *     `session_id`), so it is not routable — and the office has no action
+ *     for it either: the loop stop surfaces as the following turn/session
+ *     events.
  *   - subagent_start / subagent_stop: Hermes sub-agents (delegate_task
  *     children) run real top-level sessions that fire their own lifecycle and
  *     tool hooks, so the office adopts each as its own character. Claude's
@@ -60,6 +72,8 @@ export const HERMES_HOOK_EVENTS = [
   'on_session_start',
   'pre_tool_call',
   'post_tool_call',
+  'pre_approval_request',
+  'post_approval_response',
   'on_human_input_request',
   'on_session_end',
   'on_session_finalize',

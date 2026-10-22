@@ -111,6 +111,43 @@ describe('HookEventHandler: per-event provider routing', () => {
     const start = messages.find((m) => m.type === 'agentToolStart');
     expect(start!.status).toBe('Running: npm test');
   });
+
+  it('round-trips the Hermes permission bubble across approval events', () => {
+    // Push-only provider: nothing but post_approval_response can retire the
+    // bubble (there is no JSONL watcher to broadcast the clear).
+    const agent = testAgent({ id: 1, sessionId: 'sess-h' });
+    agents.set(1, agent);
+    handler.registerAgent('sess-h', 1);
+
+    handler.handleEvent('hermes', {
+      hook_event_name: 'pre_approval_request',
+      session_id: 'sess-h',
+      tool_name: 'terminal',
+      extra: { command: 'rm -rf /tmp/scratch', surface: 'cli' },
+    });
+    expect(messages.find((m) => m.type === 'agentToolPermission')).toBeTruthy();
+    expect(agent.permissionSent).toBe(true);
+
+    handler.handleEvent('hermes', {
+      hook_event_name: 'post_approval_response',
+      session_id: 'sess-h',
+      extra: { choice: 'once', surface: 'cli' },
+    });
+    expect(messages.find((m) => m.type === 'agentToolPermissionClear')).toBeTruthy();
+    expect(agent.permissionSent).toBe(false);
+  });
+
+  it('emits no permission clear when no bubble was raised', () => {
+    const agent = testAgent({ id: 1, sessionId: 'sess-h' });
+    agents.set(1, agent);
+    handler.registerAgent('sess-h', 1);
+    handler.handleEvent('hermes', {
+      hook_event_name: 'post_approval_response',
+      session_id: 'sess-h',
+      extra: { choice: 'always' },
+    });
+    expect(messages.find((m) => m.type === 'agentToolPermissionClear')).toBeUndefined();
+  });
 });
 
 // ── hookAuth: header, loopback query, rejection branches ────────────────────
