@@ -162,6 +162,30 @@ export interface HookProvider {
   readonly sessionFilePattern?: string;
   /** Parse one line of a transcript file into an AgentEvent. */
   parseTranscriptLine?(line: string): AgentEvent | null;
+
+  /** Structured per-session activity records ("recently worked-in" directories)
+   *  for the Directory modal, for providers whose session store is NOT a
+   *  transcript directory the file collectors can walk (Hermes keeps SQLite, not
+   *  per-directory JSONL). Most-recent-first is NOT required — the collector
+   *  sorts by `lastActiveMs` and merges across providers. Undefined = the
+   *  provider has no structured store (file-fallback roots cover it, or nothing). */
+  directorySuggestions?(): { cwd: string; lastActiveMs: number }[];
+
+  /** Session-store scanner: the non-file twin of the heuristic mode above.
+   *  A provider whose sessions live somewhere `fs.watch` cannot poll (a SQLite
+   *  store plus a process registry) may expose this so the runtime gets the
+   *  same three capabilities:
+   *    - hook-less adoption of live sessions (synthetic sessionStart + activity
+   *      replay through `emit`, i.e. exactly the hook pipeline's front door),
+   *    - liveness reaping (a session the store reports as ended, or whose lease
+   *      pid is gone, is finalized even when the CLI died without a goodbye),
+   *    - sub-agent correlation the wire does not carry (the store knows
+   *      parent↔child; the event envelope often does not).
+   *  The scanner drives ONLY transitions it observed since the previous tick —
+   *  it is delta-based so hook-delivered sessions are never double-rendered.
+   *  Return null when the store cannot be opened on this host (the capability
+   *  is then simply absent; nothing else changes). */
+  createSessionScanner?(ctx: SessionScannerContext): SessionScanner | null;
   /** Build CLI launch command for +Agent button. `sessionId` is the id the
    *  office generated (Claude honours it via --session-id). Providers whose
    *  session-id format is an upstream contract they mint themselves (Hermes)
@@ -183,6 +207,39 @@ export interface HookProvider {
   /** Optional reference to a TeamProvider. When set, the hook handler registers team-aware
    *  branches (subagent routing, teammate discovery, permission forwarding, etc.). */
   readonly team?: TeamProvider;
+}
+
+// ── Session-store scanner (the non-file twin of heuristic mode) ──
+
+/** Everything a provider's session scanner may ask the runtime, and the one
+ *  door it may use to speak back. Events are fed as RAW wire-shaped envelopes
+ *  through `emit` — they run through that provider's `normalizeHookEvent` and
+ *  the full hook pipeline (pending-session adoption, session→agent routing,
+ *  event buffering), exactly like a real hook delivery. A scanner therefore
+ *  cannot invent a second rendering path: what it emits is what the CLI itself
+ *  would have POSTed, or the provider's documented scanner-only wire names. */
+export interface SessionScannerContext {
+  /** The provider's own id — stamped on every emitted event's routing. */
+  readonly providerId: string;
+  /** Deliver one raw event envelope into the hook pipeline. */
+  emit(event: Record<string, unknown>): void;
+  /** Whether the session is already driven by live signals: registered with a
+   *  character, pending confirmation, or owned by a known agent. A scanner
+   *  skips ADOPTION and activity replay for such sessions (hooks got there
+   *  first) but still owns their LIVENESS, which no hook can prove after a
+   *  process that died without a goodbye. */
+  isSessionLive(sessionId: string): boolean;
+  /** Directory-union policy for adoption, mirroring the hook adoption gate:
+   *  a session outside a tracked Directory is adopted only while "Watch All
+   *  Sessions" is on. */
+  isAdoptableDir(cwd: string): boolean;
+}
+
+/** Lifecycle handle returned by `HookProvider.createSessionScanner`. The
+ *  runtime calls start() once (idempotent) and stop() on dispose. */
+export interface SessionScanner {
+  start(): void;
+  stop(): void;
 }
 
 // TODO(provider type taxonomy): FileProvider (polling-only CLIs) and StreamProvider

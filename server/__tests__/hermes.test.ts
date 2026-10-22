@@ -35,18 +35,25 @@ describe('hermesProvider', () => {
     it('has protocolVersion 1', () => {
       expect(hermesProvider.protocolVersion).toBe(1);
     });
-    it('declares NO team provider (Hermes sub-agents are full sessions)', () => {
+    it('declares NO team provider; delegate_task spawns the Subtask sub-characters', () => {
       expect(hermesProvider.team).toBeUndefined();
-      expect(hermesProvider.subagentToolNames.size).toBe(0);
+      // Tier-2 parity: children of delegate_task render as sub-characters near
+      // the lead (correlated from the session store), not full characters.
+      expect(hermesProvider.subagentToolNames.has('delegate_task')).toBe(true);
     });
     it('classifies Hermes reading tools and not its write tools', () => {
       expect(hermesProvider.readingTools.has('read_file')).toBe(true);
       expect(hermesProvider.readingTools.has('search_files')).toBe(true);
       expect(hermesProvider.readingTools.has('terminal')).toBe(false);
     });
-    it('has no file-fallback surface, but does implement launch', () => {
+    it('has no file-fallback surface, but registers the store-shaped equivalents', () => {
       expect(hermesProvider.getSessionDirs).toBeUndefined();
       expect(hermesProvider.parseTranscriptLine).toBeUndefined();
+      // The JSONL-shaped members are deliberately absent (Hermes keeps SQLite,
+      // not transcript files); the capabilities they encode ship as:
+      expect(hermesProvider.getAllSessionRoots).toBeUndefined(); // fs walk would mis-adopt diversion JSONLs
+      expect(hermesProvider.createSessionScanner).toBeTypeOf('function');
+      expect(hermesProvider.directorySuggestions).toBeTypeOf('function');
       // The office can spawn Hermes sessions (push-only correlation rides the
       // minted session id, not a transcript file -- see buildLaunchCommand).
       expect(hermesProvider.buildLaunchCommand).toBeTypeOf('function');
@@ -254,6 +261,72 @@ describe('hermesProvider', () => {
         envelope('on_session_finalize', { extra: { platform: 'tui' } }),
       );
       expect(out!.event).toEqual({ kind: 'sessionEnd', reason: 'tui' });
+    });
+
+    // ── scanner-only wire names (never arrive over HTTP; see hermesSessionScanner) ──
+    it('routes subagent_session_start to the PARENT with the child-keyed tool id', () => {
+      const out = hermesProvider.normalizeHookEvent({
+        hook_event_name: 'subagent_session_start',
+        session_id: 'parent-sess',
+        subagent_session_id: '20261022_120000_abcdef',
+        subagent_title: 'Subagent: fix the flaky suite',
+        cwd: '/work/one',
+      });
+      expect(out!.sessionId).toBe('parent-sess');
+      expect(out!.event).toEqual({
+        kind: 'subagentStart',
+        parentToolId: 'current',
+        toolId: 'hermes-sub-20261022_120000_abcdef',
+        toolName: 'fix the flaky suite',
+        input: '/work/one',
+      });
+    });
+
+    it('falls the sub-agent label back to the tool name for untitled children', () => {
+      const out = hermesProvider.normalizeHookEvent({
+        hook_event_name: 'subagent_session_start',
+        session_id: 'parent-sess',
+        subagent_session_id: 'kid-1',
+      });
+      expect((out!.event as { toolName: string }).toolName).toBe('delegate_task');
+    });
+
+    it('drops a subagent_session_start without a child id (fail closed like junk wire)', () => {
+      expect(
+        hermesProvider.normalizeHookEvent({
+          hook_event_name: 'subagent_session_start',
+          session_id: 'parent-sess',
+        }),
+      ).toBeNull();
+    });
+
+    it('maps subagent_session_end to the precise per-child tool id', () => {
+      const out = hermesProvider.normalizeHookEvent({
+        hook_event_name: 'subagent_session_end',
+        session_id: 'parent-sess',
+        subagent_session_id: 'kid-1',
+      });
+      expect(out!.event).toEqual({
+        kind: 'subagentEnd',
+        parentToolId: 'current',
+        toolId: 'hermes-sub-kid-1',
+      });
+      // A malformed end degrades to the group sentinel (Claude's shape).
+      const degraded = hermesProvider.normalizeHookEvent({
+        hook_event_name: 'subagent_session_end',
+        session_id: 'parent-sess',
+      });
+      expect((degraded!.event as { toolId: string }).toolId).toBe('current');
+    });
+
+    it('rejects scanner events on an empty session id like every other event', () => {
+      expect(
+        hermesProvider.normalizeHookEvent({
+          hook_event_name: 'subagent_session_start',
+          session_id: '',
+          subagent_session_id: 'kid-1',
+        }),
+      ).toBeNull();
     });
   });
 

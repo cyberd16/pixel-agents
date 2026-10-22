@@ -24,9 +24,16 @@
  *    id into the envelope's top level (routable), and an approval site
  *    without a bound session posts an empty id — dropped by the guard below,
  *    never a bubble without an owner.
- *  - Hermes sub-agents run their own top-level sessions and fire their own
- *    lifecycle, so they are adopted as full characters instead of Claude-style
- *    ghosts — subagentToolNames is empty by design.
+ *  - Hermes sub-agents (delegate_task children) are separate top-level
+ *    sessions whose store rows carry parent_session_id — but the wire
+ *    envelope never does (`_payload_fields` resolves the child's own id and
+ *    drops the parent). So the session-STORE SCANNER correlates them and
+ *    renders each as a Subtask sub-character near its lead via the
+ *    scanner-only subagent_session_start/end events (Claude's shape, store's
+ *    facts). Their wire lifecycle events stay dropped by
+ *    HERMES_SILENT_PLATFORMS: full characters would double-render a
+ *    delegation, and silence would make children vanish — the sub-character
+ *    path is what makes them neither.
  *  - Unattended platform surfaces (cron/batch) are filtered out at the
  *    sessionStart gate so scheduled runs cannot flood the office; the filter
  *    is only expressible on the events that carry `platform` (session
@@ -37,16 +44,29 @@
 import * as crypto from 'crypto';
 import * as path from 'path';
 
-import type { AgentEvent, HookProvider } from '../../../../../core/src/provider.js';
+import type {
+  AgentEvent,
+  HookProvider,
+  SessionScannerContext,
+} from '../../../../../core/src/provider.js';
 import { BASH_COMMAND_DISPLAY_MAX_LENGTH } from '../../../constants.js';
 import { CONSENT_DISCLOSURE, CONSENT_INSTALL_HEADLINE } from './consentCopy.js';
-import { HERMES_SILENT_PLATFORMS, HERMES_TERMINAL_NAME_PREFIX } from './constants.js';
+import {
+  HERMES_SCANNER_SUBAGENT_END_EVENT,
+  HERMES_SCANNER_SUBAGENT_START_EVENT,
+  HERMES_SCANNER_SUGGESTION_LIMIT,
+  HERMES_SILENT_PLATFORMS,
+  HERMES_TERMINAL_NAME_PREFIX,
+} from './constants.js';
 import {
   areHooksInstalled,
+  getHermesHome,
   hermesHomeExists,
   installHooks,
   uninstallHooks,
 } from './hermesHookInstaller.js';
+import { createHermesSessionScanner, subagentStatusLabel } from './hermesSessionScanner.js';
+import { openHermesStore } from './hermesSessionStore.js';
 
 // ── formatToolStatus ─────────────────────────────────────────
 // Hermes tool names (snake_case, from the shipped toolsets). Unknown tools
@@ -266,6 +286,45 @@ function normalizeHookEvent(
         },
       };
 
+    case HERMES_SCANNER_SUBAGENT_START_EVENT: {
+      // Scanner-internal only (hermesSessionScanner correlates children via
+      // sessions.parent_session_id — the WIRE never carries the mapping). The
+      // top-level session_id is the PARENT (routing target); the child's own
+      // session id keys its sub-character chip so parallel delegates each
+      // render separately. Guarded like any wire junk all the same: a stray
+      // POST of this name must fail closed, not mint a parentless character.
+      const childId = typeof raw.subagent_session_id === 'string' ? raw.subagent_session_id : '';
+      if (!childId) return null;
+      return {
+        sessionId,
+        event: {
+          kind: 'subagentStart',
+          parentToolId: 'current',
+          toolId: `hermes-sub-${childId}`,
+          toolName: subagentStatusLabel(
+            typeof raw.subagent_title === 'string' ? raw.subagent_title : '',
+          ),
+          input: typeof raw.cwd === 'string' && raw.cwd ? raw.cwd : undefined,
+        },
+      };
+    }
+
+    case HERMES_SCANNER_SUBAGENT_END_EVENT: {
+      // The child retired; the handler resolves exactly WHICH sub-character
+      // (stable toolId) and clears the whole parent group when the last one
+      // lands. A malformed delivery falls back to the group-level 'current'
+      // sentinel, mirroring the wire's post_tool_call collapse.
+      const childId = typeof raw.subagent_session_id === 'string' ? raw.subagent_session_id : '';
+      return {
+        sessionId,
+        event: {
+          kind: 'subagentEnd',
+          parentToolId: 'current',
+          toolId: childId ? `hermes-sub-${childId}` : 'current',
+        },
+      };
+    }
+
     // Everything else — including unsubscribed-by-design events and their
     // stale/hand-edited deliveries — drops gracefully, like Claude's
     // UserPromptSubmit case.
@@ -350,13 +409,18 @@ export const hermesProvider: HookProvider = {
   formatToolStatus,
   // Hermes' approvals ride the routable pre_approval_request hook, so the
   // timer-driven fallback below is only a backstop. The exempt set stops the
-  // permission timer chasing tools that never gate: delegate_task children
-  // are full sessions with their own events, clarify/react_to_message are
-  // Hermes' user-blocking tools and surface through on_human_input_request
-  // instead of the office's permission bubble.
+  // permission timer chasing tools that never gate: delegate_task renders
+  // Subtask sub-characters instead of permission bubbles, and
+  // clarify/react_to_message are Hermes' user-blocking tools and surface
+  // through on_human_input_request instead of the office's permission bubble.
   permissionExemptTools: new Set(['delegate_task', 'clarify', 'react_to_message']),
-  // Empty by design: Hermes sub-agents are full sessions (see file header).
-  subagentToolNames: new Set<string>(),
+  // delegate_task IS the sub-agent-spawning tool. Children fire their own
+  // lifecycle on the wire (dropped: HERMES_SILENT_PLATFORMS) and are rendered
+  // from the store's parent↔child rows as Subtask sub-characters (see the
+  // session scanner) — the same visual contract Claude's Task/Agent produce.
+  // The handler suppresses the bare tool bubble for these names and the
+  // sub-character machinery takes over for the whole delegation.
+  subagentToolNames: new Set(['delegate_task']),
   readingTools: new Set([
     'read_file',
     'search_files',
@@ -367,9 +431,40 @@ export const hermesProvider: HookProvider = {
   ]),
   terminalNamePrefix: HERMES_TERMINAL_NAME_PREFIX,
 
-  // No file fallback, no global session roots, no parseTranscriptLine: the
-  // office sees Hermes sessions through hooks (the Hermes side owns
-  // transcripts, and adopting from them without hooks is a follow-up provider
-  // feature). But it CAN launch them:
+  // ── The heuristic surface, store-shaped ──────────────────────────
+  // Hermes keeps sessions in ONE SQLite database (`<home>/state.db`) plus a
+  // JSON lease registry — there is no per-workspace transcript directory, so
+  // the JSONL-shaped members (getSessionDirs / getAllSessionRoots /
+  // sessionFilePattern / parseTranscriptLine) are deliberately NOT
+  // registered: a file scanner pointed at the home would mis-adopt the
+  // emergency diversion JSONLs as junk characters, and push-only launch
+  // registration already tolerates their absence (see the launcher). The
+  // CAPABILITIES those members encode for Claude do exist here, and ship as:
+  //  - createSessionScanner: hook-less adoption + liveness reaping + child
+  //    correlation, reading state.db / active_sessions.json and driving the
+  //    ordinary hook pipeline with transition events (the parseTranscriptLine
+  //    equivalent is the messages-table replay in hermesSessionScanner);
+  //  - directorySuggestions: the "worked in here recently" list straight from
+  //    the sessions table, the getAllSessionRoots-walk equivalent.
+  createSessionScanner: (ctx: SessionScannerContext) => createHermesSessionScanner(ctx),
+
+  directorySuggestions(): { cwd: string; lastActiveMs: number }[] {
+    // Short-lived open/close: the modal asks rarely, and pinning a read-only
+    // handle across the app's lifetime buys nothing. Any failure (no store,
+    // no sqlite builtin, locked file) yields no suggestions — never a throw.
+    const store = openHermesStore(getHermesHome());
+    if (!store) return [];
+    try {
+      return store.listDirectorySuggestions(HERMES_SCANNER_SUGGESTION_LIMIT);
+    } finally {
+      try {
+        store.close();
+      } catch {
+        /* already gone */
+      }
+    }
+  },
+
+  // It CAN launch them:
   buildLaunchCommand,
 };
