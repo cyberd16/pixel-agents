@@ -30,6 +30,18 @@ export type AgentEvent =
        *  its response (Stop). Drives the "Waiting for input" vs "Done" label.
        *  Absent/false = the agent finished its turn (Done). */
       awaitingInput?: boolean;
+      /** Context snapshot finalized by this turn, for providers that PUSH it on
+       *  the turn-end event instead of keeping a transcript the server can poll
+       *  (Hermes: its per-turn token totals + resolved window). Absent = this
+       *  turn said nothing about context; the gauge keeps its previous value. */
+      usage?: {
+        /** Tokens the finalized turn's last request carried (prompt side + what
+         *  the model wrote). Matches the transcript-derived figure's semantics. */
+        contextTokens: number;
+        /** The window that context counts against, provider-resolved. Absent =
+         *  the server keeps its estimate and widens it if the context exceeds. */
+        maxContextTokens?: number;
+      };
     }
   | {
       kind: 'subagentStart';

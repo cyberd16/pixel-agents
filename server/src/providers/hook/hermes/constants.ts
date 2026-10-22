@@ -34,7 +34,11 @@
  *   on_session_end      → turnEnd — fires PER TURN at the end of
  *                         `run_conversation()` (one turn per user message on
  *                         every surface), NOT only at session close. Carries
- *                         completed/failed/interrupted + platform in `extra`.
+ *                         completed/failed/interrupted + platform in `extra`,
+ *                         and since the per-turn usage snapshot also the last
+ *                         response's token totals + resolved window there
+ *                         (`usage`/`context_length`, integers only) — the
+ *                         gauge data for this push-only provider.
  *   on_session_finalize → sessionEnd (the session is closing; retires the
  *                         character the way Claude's SessionEnd does)
  *   pre_approval_request  → permissionRequest (the "Needs approval" bubble;

@@ -118,6 +118,32 @@ function isSilentSession(raw: Record<string, unknown>): boolean {
   return p !== undefined && HERMES_SILENT_PLATFORMS.has(p);
 }
 
+const positiveInt = (v: unknown): number | undefined =>
+  typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined;
+
+/**
+ * Context-gauge snapshot from on_session_end's `usage` / `context_length`.
+ *
+ * Hermes' canonical usage carries `prompt_tokens` (input + cache reads + cache
+ * writes) and `completion_tokens`; their sum is the same figure the transcript
+ * path derives per assistant record for Claude. A turn that never reached an
+ * API response posts `usage: null` (and a Hermes without the per-turn snapshot
+ * posts nothing at all), so we only speak when the numbers sum — silence means
+ * "leave the gauge alone", never a fabricated zero.
+ */
+function contextUsageFromExtra(
+  extra: Record<string, unknown>,
+): { contextTokens: number; maxContextTokens?: number } | undefined {
+  const usage = extra.usage;
+  if (!usage || typeof usage !== 'object') return undefined;
+  const u = usage as Record<string, unknown>;
+  const contextTokens =
+    (positiveInt(u.prompt_tokens) ?? 0) + (positiveInt(u.completion_tokens) ?? 0);
+  if (contextTokens <= 0) return undefined;
+  const maxContextTokens = positiveInt(extra.context_length);
+  return maxContextTokens ? { contextTokens, maxContextTokens } : { contextTokens };
+}
+
 function normalizeHookEvent(
   raw: Record<string, unknown>,
 ): { sessionId: string; event: AgentEvent } | null {
@@ -188,7 +214,15 @@ function normalizeHookEvent(
       // human-input events, which arrive as their own permissionRequest /
       // awaitingInput signals before this turn end.
       if (isSilentSession(raw)) return null;
-      return { sessionId, event: { kind: 'turnEnd' } };
+      // Hermes also pushes the turn's context snapshot on this event: the last
+      // API response's canonical token totals plus the window its compressor
+      // resolved. This provider has no transcript to poll, so without these
+      // numbers the gauge would never move.
+      const usage = contextUsageFromExtra(extraOf(raw));
+      return {
+        sessionId,
+        event: usage ? { kind: 'turnEnd', usage } : { kind: 'turnEnd' },
+      };
     }
 
     case 'on_human_input_request':

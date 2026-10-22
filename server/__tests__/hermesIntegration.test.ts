@@ -148,6 +148,50 @@ describe('HookEventHandler: per-event provider routing', () => {
     });
     expect(messages.find((m) => m.type === 'agentToolPermissionClear')).toBeUndefined();
   });
+
+  it('folds a Hermes turn-end usage snapshot into the context gauge', () => {
+    // Push-only provider: the office never reads a transcript, so the only
+    // path to a moving gauge is the snapshot carried on turn end.
+    const agent = testAgent({ id: 1, sessionId: 'sess-h' });
+    agents.set(1, agent);
+    handler.registerAgent('sess-h', 1);
+
+    handler.handleEvent('hermes', {
+      hook_event_name: 'on_session_end',
+      session_id: 'sess-h',
+      extra: {
+        completed: true,
+        usage: { prompt_tokens: 5000, completion_tokens: 200, total_tokens: 5200 },
+        context_length: 131072,
+      },
+    });
+    expect(messages.find((m) => m.type === 'agentContextUsage')).toMatchObject({
+      id: 1,
+      contextTokens: 5200,
+      maxContextTokens: 131072,
+    });
+    expect(agent.contextTokens).toBe(5200);
+    expect(agent.maxContextTokens).toBe(131072);
+  });
+
+  it('leaves the gauge alone on a usage-less Hermes turn end', () => {
+    const agent = testAgent({
+      id: 1,
+      sessionId: 'sess-h',
+      contextTokens: 4200,
+      maxContextTokens: 131072,
+    });
+    agents.set(1, agent);
+    handler.registerAgent('sess-h', 1);
+
+    handler.handleEvent('hermes', {
+      hook_event_name: 'on_session_end',
+      session_id: 'sess-h',
+      extra: { usage: null },
+    });
+    expect(messages.find((m) => m.type === 'agentContextUsage')).toBeUndefined();
+    expect(agent.contextTokens).toBe(4200);
+  });
 });
 
 // ── hookAuth: header, loopback query, rejection branches ────────────────────

@@ -159,6 +159,62 @@ describe('hermesProvider', () => {
       ).toBeNull();
     });
 
+    it('folds the per-turn usage snapshot into turnEnd for the context gauge', () => {
+      const out = hermesProvider.normalizeHookEvent(
+        envelope('on_session_end', {
+          extra: {
+            completed: true,
+            platform: 'cli',
+            usage: {
+              prompt_tokens: 5000,
+              completion_tokens: 200,
+              total_tokens: 5200,
+              input_tokens: 1000,
+              output_tokens: 200,
+              cache_read_tokens: 4000,
+              cache_write_tokens: 0,
+              reasoning_tokens: 50,
+            },
+            context_length: 131072,
+          },
+        }),
+      );
+      // prompt side + what the model wrote: same semantics as the Claude
+      // transcript figure; context_length is the provider's own denominator.
+      expect(out!.event).toEqual({
+        kind: 'turnEnd',
+        usage: { contextTokens: 5200, maxContextTokens: 131072 },
+      });
+    });
+
+    it('says nothing about the gauge when the turn reached no API response', () => {
+      // usage: null = a turn that never got a response; a Hermes older than
+      // the snapshot omits the key; junk and all-zero usage must never mint
+      // a gauge value -- "no news" leaves the previous reading alone.
+      for (const extra of [
+        { usage: null },
+        {},
+        { usage: { prompt_tokens: 'x', completion_tokens: -5 } },
+        { usage: { prompt_tokens: 0, completion_tokens: 0 } },
+        { usage: 'not an object' },
+      ]) {
+        expect(
+          hermesProvider.normalizeHookEvent(
+            envelope('on_session_end', { extra: { platform: 'cli', ...extra } }),
+          )!.event,
+        ).toEqual({ kind: 'turnEnd' });
+      }
+    });
+
+    it('omits maxContextTokens when the window is unsaid rather than guessing', () => {
+      const out = hermesProvider.normalizeHookEvent(
+        envelope('on_session_end', {
+          extra: { usage: { prompt_tokens: 900, completion_tokens: 100 } },
+        }),
+      );
+      expect(out!.event).toEqual({ kind: 'turnEnd', usage: { contextTokens: 1000 } });
+    });
+
     it('maps on_human_input_request to turnEnd awaitingInput (the idle bubble)', () => {
       const out = hermesProvider.normalizeHookEvent(
         envelope('on_human_input_request', { extra: { kind: 'elicitation', platform: 'cli' } }),

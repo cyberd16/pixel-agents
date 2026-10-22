@@ -25,9 +25,10 @@ export const CONSENT_FACT_WHAT =
 /** WHAT data moves, and where it stops — same honesty contract as Claude's:
  *  no "nothing leaves your machine" promise the --host flag could break. */
 export const CONSENT_FACT_DATA =
-  'Hermes Agent will POST those events - including tool names and tool inputs - to a Pixel Agents ' +
-  'server on this machine. Everything stays local - the server listens only on 127.0.0.1 - unless ' +
-  'you explicitly start it with --host to expose it on your network.';
+  'Hermes Agent will POST those events - including tool names, tool inputs, and per-turn token ' +
+  'totals for the context gauge - to a Pixel Agents server on this machine. Everything stays ' +
+  'local - the server listens only on 127.0.0.1 - unless you explicitly start it with --host to ' +
+  'expose it on your network.';
 
 /** HOW to undo it. */
 export const CONSENT_FACT_REVERSIBLE =

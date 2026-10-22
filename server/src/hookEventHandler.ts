@@ -3,6 +3,7 @@ import * as path from 'path';
 import type { AgentEvent, HookProvider } from '../../core/src/provider.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import { SESSION_END_GRACE_MS } from './constants.js';
+import { applyContextUsage } from './contextUsage.js';
 import { hookProviderById } from './providers/index.js';
 import type { SessionRouter } from './sessionRouter.js';
 import { getInlineTeammates, hasInlineTeammates, hasPromotedBackgroundAgent } from './teamUtils.js';
@@ -385,6 +386,17 @@ export class HookEventHandler {
         // Handles Stop AND Notification(idle_prompt) -- both normalize to turnEnd.
         // awaitingInput discriminates them: idle_prompt sets it (-> "Waiting for
         // input"), Stop leaves it absent (-> "Done").
+        // Push-only providers carry the turn's context snapshot on the event;
+        // transcript providers leave it absent (fileWatcher drives their gauge).
+        if (normEvent.usage) {
+          applyContextUsage(
+            agentId,
+            agent,
+            this.agents,
+            normEvent.usage.contextTokens,
+            normEvent.usage.maxContextTokens,
+          );
+        }
         return this.handleStop(agent, agentId, provider, normEvent.awaitingInput === true);
       case 'subagentTurnEnd':
         // Handles TeammateIdle AND TaskCompleted -- both normalize here. The normalized
