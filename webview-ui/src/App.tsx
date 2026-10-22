@@ -9,6 +9,7 @@ import { DebugView } from './components/DebugView.js';
 import { DirectoryModal } from './components/DirectoryModal.js';
 import { EditActionBar } from './components/EditActionBar.js';
 import { IntroBubble } from './components/IntroBubble.js';
+import { LaunchRejectionToast } from './components/LaunchRejectionToast.js';
 import { MigrationNotice } from './components/MigrationNotice.js';
 import { SettingsModal } from './components/SettingsModal.js';
 import { TerminalDrawer } from './components/TerminalDrawer.js';
@@ -27,6 +28,7 @@ import { useIntroTour } from './hooks/useIntroTour.js';
 import { useIsMobile } from './hooks/useIsMobile.js';
 import { useKeyboardViewport } from './hooks/useKeyboardViewport.js';
 import { useTerminalDrawer } from './hooks/useTerminalDrawer.js';
+import { resolveLaunchProviderId } from './launchProvider.js';
 import { MobileShell } from './mobile/MobileShell.js';
 import { useMobileShell } from './mobile/useMobileShell.js';
 import { OfficeCanvas } from './office/components/OfficeCanvas.js';
@@ -107,6 +109,7 @@ function App() {
     hooksEnabled,
     hooksInstalled,
     hookProviders,
+    launchRejection,
     hooksStatusSeq,
     hooksInfoShown,
     consentRequest,
@@ -164,9 +167,24 @@ function App() {
     agentSeenActivity,
   });
 
-  const launchIntoDirectory = useCallback((directory: Directory) => {
-    transport.send({ type: 'launchAgent', directoryPath: directory.path });
-  }, []);
+  // Providers the server can actually spawn (additive `launchable` field;
+  // older servers omit it and everything is assumed launchable, matching the
+  // pre-picker behavior where every launch was Claude).
+  const launchableProviders = useMemo(
+    () => hookProviders.filter((p) => p.launchable !== false),
+    [hookProviders],
+  );
+
+  const launchIntoDirectory = useCallback(
+    (directory: Directory) => {
+      transport.send({
+        type: 'launchAgent',
+        directoryPath: directory.path,
+        providerId: resolveLaunchProviderId(launchableProviders),
+      });
+    },
+    [launchableProviders],
+  );
   const mobileShell = useMobileShell({
     getOfficeState,
     terminalAgentIds,
@@ -659,8 +677,13 @@ function App() {
           onEditDirectory={directoryEditor.edit}
           terminalAvailable={terminalAvailable}
           terminalUnavailableReason={terminalUnavailableReason}
+          launchProviders={launchableProviders}
         />
       )}
+
+      {/* The server refused a launch (unknown/view-only provider): the click
+          committed the user to an action, so the answer has to be visible. */}
+      {launchRejection && <LaunchRejectionToast rejection={launchRejection} />}
 
       {/* Mobile: Settings floats top-left (the layout editor stays desktop-
             only — its tools are drag/hover-driven). */}

@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { Directory } from '../hooks/useExtensionMessages.js';
+import type { LaunchProviderOption } from '../launchProvider.js';
+import { resolveLaunchProviderId, writeStoredLaunchProvider } from '../launchProvider.js';
 import { isBrowserRuntime } from '../runtime.js';
 import { transport } from '../transport/index.js';
 import { LaunchDrawer } from './LaunchDrawer.js';
@@ -20,6 +22,9 @@ interface BottomToolbarProps {
   terminalAvailable: boolean;
   /** Why the terminal is off (shown on the disabled button's tooltip). */
   terminalUnavailableReason: string | null;
+  /** Launchable providers (server-reported). 0/1 entries: no choice UI; >1:
+   *  the drawer header cycles through them, persisted per device. */
+  launchProviders: LaunchProviderOption[];
 }
 
 export function BottomToolbar({
@@ -32,9 +37,36 @@ export function BottomToolbar({
   onEditDirectory,
   terminalAvailable,
   terminalUnavailableReason,
+  launchProviders,
 }: BottomToolbarProps) {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const launchRef = useRef<HTMLDivElement>(null);
+
+  // The drawer's current launch target. Initialized from (and written back
+  // to) the per-device stored pick; a stored id that no longer names a
+  // launchable provider (removed server-side) falls back through
+  // resolveLaunchProviderId's precedence instead of staying selected.
+  const [selectedProviderId, setSelectedProviderId] = useState<string | undefined>(() =>
+    resolveLaunchProviderId(launchProviders),
+  );
+  // Re-resolve when the server's launchable list arrives/changes (the first
+  // capabilities message lands after mount).
+  useEffect(() => {
+    setSelectedProviderId((prev) =>
+      prev && launchProviders.some((p) => p.id === prev)
+        ? prev
+        : resolveLaunchProviderId(launchProviders),
+    );
+  }, [launchProviders]);
+
+  const cycleProvider = useCallback(() => {
+    setSelectedProviderId((prev) => {
+      const idx = launchProviders.findIndex((p) => p.id === prev);
+      const next = launchProviders[(idx + 1) % Math.max(launchProviders.length, 1)];
+      if (next) writeStoredLaunchProvider(next.id);
+      return next?.id ?? prev;
+    });
+  }, [launchProviders]);
 
   // Close the launch drawer on outside press (the dropdown convention here).
   useEffect(() => {
@@ -57,7 +89,11 @@ export function BottomToolbar({
 
   const handleDirectorySelect = (directory: Directory) => {
     setIsDrawerOpen(false);
-    transport.send({ type: 'launchAgent', directoryPath: directory.path });
+    transport.send({
+      type: 'launchAgent',
+      directoryPath: directory.path,
+      providerId: selectedProviderId,
+    });
   };
 
   // Standalone can launch agents whenever the server has a working PTY. When it
@@ -108,6 +144,9 @@ export function BottomToolbar({
               setIsDrawerOpen(false);
               onEditDirectory(directory);
             }}
+            launchProviders={launchProviders}
+            selectedProviderId={selectedProviderId}
+            onCycleProvider={cycleProvider}
           />
         </div>
       )}

@@ -130,7 +130,10 @@ interface ExtensionMessageState {
   /** Hook providers available on this machine (providerCapabilities.providers).
    *  The row list SettingsModal renders; [] on a single-provider server, where
    *  Settings falls back to the legacy single Claude row. */
-  hookProviders: { id: string; displayName: string }[];
+  hookProviders: { id: string; displayName: string; launchable?: boolean }[];
+  /** The server's refusal of a launchAgent attempt (see LaunchRejected wire);
+   *  App surfaces it as a dismissable toast. */
+  launchRejection: { providerId?: string; reason: string; at: number } | null;
   /** Bumped per provider on every hooksStatus message. `hooksInstalled` alone cannot say "the server answered": a
    *  failed install re-reports the `false` already held, so no effect runs. The Intro needs the ARRIVAL to tell a
    *  pending install from a failed one, per provider — A's status is never a verdict on B's install. */
@@ -214,7 +217,17 @@ export function useExtensionMessages(
   const [hooksStatusSeq, setHooksStatusSeq] = useState<Record<string, number>>({});
   // Display registry from providerCapabilities.providers ([] until a
   // multi-provider server answers; an older server never sends the field).
-  const [hookProviders, setHookProviders] = useState<{ id: string; displayName: string }[]>([]);
+  const [hookProviders, setHookProviders] = useState<
+    { id: string; displayName: string; launchable?: boolean }[]
+  >([]);
+  // A launch the server refused (unknown provider, view-only provider, ...).
+  // Timestamped rather than seq'd: the toast auto-dismisses on time, and a new
+  // rejection replaces the old one with the same shape.
+  const [launchRejection, setLaunchRejection] = useState<{
+    providerId?: string;
+    reason: string;
+    at: number;
+  } | null>(null);
   const [hooksInfoShown, setHooksInfoShown] = useState(true);
   // FIFO of pending consent asks, at most one per provider (a re-ask replaces that provider's entry in place). The
   // HEAD is what the Intro renders; answering, dismissing, or mooting it advances to the next provider's ask rather
@@ -308,6 +321,17 @@ export function useExtensionMessages(
       if (msg.type === 'terminalAvailability') {
         setTerminalAvailable(msg.available as boolean);
         setTerminalUnavailableReason((msg.reason as string | undefined) ?? null);
+        return;
+      }
+
+      if (msg.type === 'launchRejected') {
+        // The click committed the user to a launch; silence here would read as
+        // another "+ Agent does nothing" bug. App renders this as a toast.
+        setLaunchRejection({
+          providerId: (msg.providerId as string | undefined) ?? undefined,
+          reason: String(msg.reason ?? 'Launch refused.'),
+          at: Date.now(),
+        });
         return;
       }
 
@@ -907,6 +931,7 @@ export function useExtensionMessages(
     hooksEnabled,
     hooksInstalled,
     hookProviders,
+    launchRejection,
     hooksStatusSeq,
     setHooksEnabled,
     hooksInfoShown,
