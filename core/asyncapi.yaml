@@ -124,6 +124,7 @@ components:
         # Terminal (standalone embedded terminal control plane)
         - $ref: '#/components/schemas/TerminalAvailability'
         - $ref: '#/components/schemas/TerminalSessionOpened'
+        - $ref: '#/components/schemas/LaunchRejected'
         - $ref: '#/components/schemas/TerminalSessionClosed'
         # Diagnostics
         - $ref: '#/components/schemas/AgentDiagnostics'
@@ -207,6 +208,31 @@ components:
         displayName:
           type: string
           description: Human-readable provider name for Settings rows and consent copy.
+        launchable:
+          type: boolean
+          description: >-
+            Whether the server can spawn this provider from the office
+            (+Agent). Additive: older clients ignore it; a provider without
+            buildLaunchCommand reports false.
+
+    LaunchRejected:
+      description: >-
+        The server refused a launchAgent attempt (unknown providerId, a
+        view-only provider without buildLaunchCommand). Sent to the
+        requesting socket only — the click committed the user to a launch,
+        and silence would read as a dead button.
+      type: object
+      additionalProperties: false
+      required: [type, reason]
+      properties:
+        type:
+          const: launchRejected
+        providerId:
+          type: string
+          description: The provider the client asked to launch, when it was a string.
+        reason:
+          type: string
+          description: Human-readable cause surfaced as a toast.
 
     AgentCreated:
       description: A new agent has appeared in the office.
@@ -1003,7 +1029,10 @@ components:
           const: webviewReady
 
     LaunchAgent:
-      description: Launch a new Claude agent in a new terminal.
+      description: >-
+        Launch a new agent of one provider in a server PTY. Absent providerId
+        = legacy wire = Claude (documented server fallback); an id naming no
+        registered provider is refused with launchRejected, never defaulted.
       type: object
       additionalProperties: false
       required: [type]
@@ -1013,6 +1042,9 @@ components:
         directoryPath:
           type: string
           description: Path of the Directory to launch into.
+        providerId:
+          type: string
+          description: HookProvider.id to spawn (e.g. claude, hermes).
 
     FocusAgent:
       description: Focus an agent's terminal.

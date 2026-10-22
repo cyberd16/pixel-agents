@@ -718,7 +718,15 @@ describe('clientMessageHandler: standalone terminal control plane', () => {
    *  every happy path below is what a client that opened the CLI's URL sees.
    *  The untokened cases pass `privileged: false` explicitly. */
   function ctx(overrides: Partial<ClientMessageContext> = {}): ClientMessageContext {
-    return { store, cache: null, privileged: true, ...overrides };
+    // Identity PATH resolution: launches assert the provider's RAW command and
+    // never depend on what the test host's PATH happens to contain.
+    return {
+      store,
+      cache: null,
+      privileged: true,
+      resolveCommand: (command: string, args: string[]) => ({ command, args }),
+      ...overrides,
+    };
   }
 
   function dispatch(msg: Record<string, unknown>, context: ClientMessageContext): void {
@@ -866,6 +874,45 @@ describe('clientMessageHandler: standalone terminal control plane', () => {
     dispatch({ type: 'setBypassPermissions', enabled: true }, ctx());
     dispatch({ type: 'launchAgent' }, ctx({ runtime, ptyManager: manager }));
     expect(spawnArgs[1]).toContain('--dangerously-skip-permissions');
+  });
+
+  // ── launchAgent: provider routing (multi-provider wire) ──────
+
+  it('launchAgent with providerId spawns that provider, minting its session id', () => {
+    const { manager, spawnArgs } = workingPtyManager();
+
+    dispatch({ type: 'launchAgent', providerId: 'hermes' }, ctx({ runtime, ptyManager: manager }));
+
+    expect(store.size).toBe(1);
+    const agent = [...store.values()][0];
+    expect(agent.providerId).toBe('hermes');
+    // Hermes' own id contract, not the office uuid — and the registered id is
+    // exactly what was passed to --session-id (the hook correlation key).
+    expect(agent.sessionId).toMatch(/^\d{8}_\d{6}_[0-9a-f]{6}$/);
+    expect(spawnArgs[0][0]).toBe('chat');
+    expect(spawnArgs[0][1]).toBe('--session-id');
+    expect(spawnArgs[0][2]).toBe(agent.sessionId);
+  });
+
+  it('launchAgent with an unknown providerId is refused, never defaulted', () => {
+    const { manager } = workingPtyManager();
+
+    dispatch({ type: 'launchAgent', providerId: 'nope' }, ctx({ runtime, ptyManager: manager }));
+
+    expect(store.size).toBe(0);
+    const rejected = sent.find((m) => m.type === 'launchRejected') as Record<string, unknown>;
+    expect(rejected).toBeDefined();
+    expect(rejected.providerId).toBe('nope');
+  });
+
+  it('launchAgent without providerId keeps the legacy Claude launch', () => {
+    const { manager, spawnArgs } = workingPtyManager();
+
+    dispatch({ type: 'launchAgent' }, ctx({ runtime, ptyManager: manager }));
+
+    const agent = [...store.values()][0];
+    expect(agent.providerId).toBe('claude');
+    expect(spawnArgs[0]).toContain('--session-id');
   });
 
   it('setBypassPermissions persists via the adapter (standalone namespace)', () => {

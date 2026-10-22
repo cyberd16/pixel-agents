@@ -31,6 +31,7 @@
  *    pending has no agent to receive its later tool events either.
  */
 
+import * as crypto from 'crypto';
 import * as path from 'path';
 
 import type { AgentEvent, HookProvider } from '../../../../../core/src/provider.js';
@@ -240,6 +241,39 @@ function consentDisclosure(): { headline: string; disclosure: string } {
   return { headline: CONSENT_INSTALL_HEADLINE, disclosure: CONSENT_DISCLOSURE };
 }
 
+// ── buildLaunchCommand: spawning `hermes` from the office ─────────
+
+/** Hermes session ids are a validated upstream contract (hermes_state_ids
+ *  .new_session_id / is_known_session_id): `<YYYYmmdd_HHMMSS>_<6 hex>`, local
+ *  clock. A raw uuid would be REJECTED by the Hermes CLI, so we mint in that
+ *  shape and hand it back via the returned sessionId — the launcher registers
+ *  it and the on_session_start hook of the spawned process carries it
+ *  verbatim, closing the correlation loop without any transcript file. */
+function mintHermesSessionId(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(
+    now.getHours(),
+  )}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  return `${stamp}_${crypto.randomBytes(3).toString('hex')}`;
+}
+
+function buildLaunchCommand(
+  _candidateSessionId: string,
+  cwd: string,
+  opts?: { bypassPermissions?: boolean },
+): { command: string; args: string[]; env?: Record<string, string>; sessionId: string } {
+  const sessionId = mintHermesSessionId();
+  const args = ['chat', '--session-id', sessionId];
+  // Hermes' analogue of Claude's --dangerously-skip-permissions.
+  if (opts?.bypassPermissions) args.push('--yolo');
+  // The bare name is intentional: resolveLaunchCommand absolutises it on
+  // Windows (node-pty there cannot spawn bare PATH names) and POSIX resolves
+  // it in posix_spawnp. The office launches whichever `hermes` the server's
+  // PATH holds — the same binary the operator's terminal would run.
+  return { command: 'hermes', args, env: { PWD: cwd }, sessionId };
+}
+
 // ── The provider ─────────────────────────────────────────────
 
 export const hermesProvider: HookProvider = {
@@ -281,9 +315,9 @@ export const hermesProvider: HookProvider = {
   ]),
   terminalNamePrefix: HERMES_TERMINAL_NAME_PREFIX,
 
-  // No file fallback, no global session roots, no parseTranscriptLine, no
-  // buildLaunchCommand: the office sees Hermes sessions that have hooks
-  // installed (the Hermes side owns transcripts, and adopting from them
-  // without hooks is a follow-up provider feature — every member is optional
-  // on HookProvider precisely so a push-only provider can decline them).
+  // No file fallback, no global session roots, no parseTranscriptLine: the
+  // office sees Hermes sessions through hooks (the Hermes side owns
+  // transcripts, and adopting from them without hooks is a follow-up provider
+  // feature). But it CAN launch them:
+  buildLaunchCommand,
 };

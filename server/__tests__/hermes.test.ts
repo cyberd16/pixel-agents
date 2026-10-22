@@ -44,10 +44,12 @@ describe('hermesProvider', () => {
       expect(hermesProvider.readingTools.has('search_files')).toBe(true);
       expect(hermesProvider.readingTools.has('terminal')).toBe(false);
     });
-    it('has no file-fallback surface (push-only provider)', () => {
+    it('has no file-fallback surface, but does implement launch', () => {
       expect(hermesProvider.getSessionDirs).toBeUndefined();
       expect(hermesProvider.parseTranscriptLine).toBeUndefined();
-      expect(hermesProvider.buildLaunchCommand).toBeUndefined();
+      // The office can spawn Hermes sessions (push-only correlation rides the
+      // minted session id, not a transcript file -- see buildLaunchCommand).
+      expect(hermesProvider.buildLaunchCommand).toBeTypeOf('function');
     });
   });
 
@@ -169,6 +171,29 @@ describe('hermesProvider', () => {
         envelope('on_session_finalize', { extra: { platform: 'tui' } }),
       );
       expect(out!.event).toEqual({ kind: 'sessionEnd', reason: 'tui' });
+    });
+  });
+
+  describe('buildLaunchCommand', () => {
+    const launch = () =>
+      hermesProvider.buildLaunchCommand!('candidate-uuid-ignored', 'C:\\work\\dir');
+
+    it('mints a Hermes-format session id and returns it for registration', () => {
+      const cmd = launch();
+      // hermes_state_ids contract: <YYYYmmdd_HHMMSS>_<6 hex>. A uuid would be
+      // rejected by the CLI's validation -- this is the whole reason the
+      // provider overrides the candidate id.
+      expect(cmd.sessionId).toMatch(/^\d{8}_\d{6}_[0-9a-f]{6}$/);
+      expect(cmd.command).toBe('hermes');
+      expect(cmd.args).toEqual(['chat', '--session-id', cmd.sessionId]);
+      expect(cmd.env).toEqual({ PWD: 'C:\\work\\dir' });
+    });
+
+    it('adds --yolo when the host posture bypasses approvals', () => {
+      const cmd = hermesProvider.buildLaunchCommand!('x', 'C:\\work', {
+        bypassPermissions: true,
+      });
+      expect(cmd.args).toContain('--yolo');
     });
   });
 

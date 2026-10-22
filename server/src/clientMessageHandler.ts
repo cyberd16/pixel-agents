@@ -26,6 +26,7 @@ import { applyConsentChoice } from './providers/hook/consentExecutor.js';
 import { hooksConsentRequest } from './providers/hook/consentGate.js';
 import { claudeProvider, hookProviderById, hookProviders } from './providers/index.js';
 import type { PtySessionManager } from './terminal/ptySessionManager.js';
+import type { resolveLaunchCommand } from './terminal/resolveLaunchCommand.js';
 import { launchStandaloneAgent } from './terminal/standaloneAgentLauncher.js';
 
 type WsSend = (message: Record<string, unknown>) => void;
@@ -74,6 +75,10 @@ export interface ClientMessageContext {
   /** PTY terminals for standalone-launched agents. Absent in VS Code embedded
    *  mode, where the editor owns terminal lifecycle. */
   ptyManager?: PtySessionManager;
+  /** Injectable PATH resolution for launches (see resolveLaunchCommand);
+   *  absent = production resolver. Tests pass an identity so assertions pin
+   *  the provider's raw command and never depend on the host's PATH. */
+  resolveCommand?: typeof resolveLaunchCommand;
 }
 
 // ── Setting key constants (mirror adapters/vscode/constants.ts) ──
@@ -143,15 +148,37 @@ export function handleClientMessage(
       // the browser drawer (a shell running as the operator -- privileged, like
       // every message past the read-only gate above).
       if (!runtime || !ctx.ptyManager) break;
+      // The provider id is echoed by the client like every other provider-
+      // targeted message: an unknown id names nothing to launch, so it is
+      // refused, not defaulted. Absent providerId = legacy wire = Claude.
+      const rawProviderId = msg.providerId as string | undefined;
+      const provider =
+        rawProviderId === undefined ? claudeProvider : hookProviderById(rawProviderId);
+      if (!provider) {
+        send({ type: 'launchRejected', providerId: rawProviderId, reason: 'Unknown provider.' });
+        break;
+      }
+      // A provider without a launch command is push-only (it observes existing
+      // sessions but the office cannot spawn one): say so instead of silently
+      // doing nothing -- the click already commits the user to an action.
+      if (!provider.buildLaunchCommand) {
+        send({
+          type: 'launchRejected',
+          providerId: provider.id,
+          reason: `${provider.displayName} cannot be launched from the office (view-only provider).`,
+        });
+        break;
+      }
       // Permission posture is a persisted per-host setting, never a per-launch
       // field: the client sends only where to launch. Every launch comes from a
       // drawer row and carries its Directory's path; no directoryPath falls
       // back to the server cwd (launchStandaloneAgent's own default).
       launchStandaloneAgent(
-        { store, runtime, ptyManager: ctx.ptyManager, provider: claudeProvider },
+        { store, runtime, ptyManager: ctx.ptyManager, provider },
         {
           directoryPath: msg.directoryPath as string | undefined,
           bypassPermissions: adapter?.getSetting(KEY_BYPASS_PERMISSIONS, false) ?? false,
+          resolveCommand: ctx.resolveCommand,
         },
       );
       break;
@@ -485,7 +512,14 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
       type: 'providerCapabilities',
       readingTools: [...readingTools],
       subagentToolNames: [...subagentToolNames],
-      providers: availableProviders.map((p) => ({ id: p.id, displayName: p.displayName })),
+      providers: availableProviders.map((p) => ({
+        id: p.id,
+        displayName: p.displayName,
+        // Additive field: the office only offers a provider in the launch
+        // drawer when the server can actually spawn it (a view-only provider
+        // has no buildLaunchCommand; an older webview ignores this field).
+        launchable: typeof p.buildLaunchCommand === 'function',
+      })),
     });
   }
 
