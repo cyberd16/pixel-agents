@@ -21,6 +21,7 @@ import {
 import { collectAllDirectorySuggestions } from './directorySuggestions.js';
 import { hostDirectory } from './hostDirectory.js';
 import { readLayoutFromFile, writeLayoutToFile } from './layoutPersistence.js';
+import { buildProviderCapabilities } from './providerCapabilities.js';
 import type { ConsentEffects } from './providers/hook/consentExecutor.js';
 import { applyConsentChoice } from './providers/hook/consentExecutor.js';
 import { hooksConsentRequest } from './providers/hook/consentGate.js';
@@ -484,47 +485,12 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
   // them.
   send({ type: 'officeAccess', readOnly: ctx.privileged !== true });
 
-  // 1. Provider capabilities (must arrive before any agent messages) — the
-  // union across the providers that report themselves AVAILABLE on this
-  // machine. Union is lossless: each provider's tool-name space belongs to a
-  // different CLI (Claude's PascalCase `Read`/`Grep` vs Hermes' snake_case
-  // `read_file`/`search_files`), so merging the sets cannot mis-classify a
-  // tool from either provider. `providers` is the list Settings renders as
-  // one hooks row per integration; an unavailable provider is absent from
-  // every three fields, so the UI cannot offer a hook it has no way to see.
-  // Synchronous like every other handshake message: availability probes are
-  // declared SYNC on HookProvider precisely so this ordering never wobbles.
-  // A provider whose probe THROWS counts as available: a flaky check must
-  // never silently hide an integration.
-  const availableProviders = hookProviders.filter((provider) => {
-    if (!provider.isAvailable) return true;
-    try {
-      return provider.isAvailable();
-    } catch {
-      return true;
-    }
-  });
-  {
-    const readingTools = new Set<string>();
-    const subagentToolNames = new Set<string>();
-    for (const provider of availableProviders) {
-      for (const t of provider.readingTools) readingTools.add(t);
-      for (const t of provider.subagentToolNames) subagentToolNames.add(t);
-    }
-    send({
-      type: 'providerCapabilities',
-      readingTools: [...readingTools],
-      subagentToolNames: [...subagentToolNames],
-      providers: availableProviders.map((p) => ({
-        id: p.id,
-        displayName: p.displayName,
-        // Additive field: the office only offers a provider in the launch
-        // drawer when the server can actually spawn it (a view-only provider
-        // has no buildLaunchCommand; an older webview ignores this field).
-        launchable: typeof p.buildLaunchCommand === 'function',
-      })),
-    });
-  }
+  // 1. Provider capabilities (must arrive before any agent messages) — built
+  // by the shared helper so the VS Code adapter's handshake ships the exact
+  // same shape (see server/src/providerCapabilities.ts).
+  // The spread is load-bearing: WsSend accepts a fresh object literal (an
+  // interface has no implicit index signature, a literal does).
+  send({ ...buildProviderCapabilities() });
 
   // 1b. Terminal availability. Gates the whole terminal UI (the + Agent button
   // and the drawer), so it must land before the client can act on agents.
