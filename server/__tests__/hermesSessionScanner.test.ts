@@ -91,7 +91,13 @@ function makeStore(world: FakeWorld): HermesSessionStore {
   };
 }
 
-function buildScanner(world: FakeWorld, seedLive: string[] = [], intervalMs = 1) {
+function buildScanner(
+  world: FakeWorld,
+  seedLive: string[] = [],
+  intervalMs = 1,
+  opts: { emitStages?: boolean } = {},
+) {
+  const emitStages = opts.emitStages ?? true;
   const emitted: Record<string, unknown>[] = [];
   const live = new Set<string>(seedLive);
   const trackedDirs = new Set<string>();
@@ -107,6 +113,7 @@ function buildScanner(world: FakeWorld, seedLive: string[] = [], intervalMs = 1)
       // id and never mint a child's own liveness.
       const sid = event.session_id;
       if (
+        emitStages &&
         typeof sid === 'string' &&
         world.sessions.has(sid) &&
         world.sessions.get(sid)?.parentSessionId === null
@@ -173,6 +180,27 @@ describe('hermesSessionScanner adoption', () => {
     expect((starts[0].extra as Record<string, unknown>).platform).toBe('cli');
     expect(ends).toHaveLength(1); // the confirmation beat; adoption lands idle
     expect(h.live.has('s1')).toBe(true);
+  });
+
+  it('retries a refused birth every tick instead of sticking observed', () => {
+    // A birth emit is a REQUEST, not an acceptance: if the office refuses to
+    // stage it (the provider's path-less sessionStart died at the staging
+    // gate — the cwd-NULL desktop defect), the watch must NOT settle into
+    // observed. Marking observed on a refused attempt made such sessions
+    // invisible forever: the confirm beat never fired, the retry never came.
+    const world = emptyWorld();
+    world.sessions.set('s1', {
+      ...session({ id: 's1', source: 'desktop', cwd: '' }),
+      endedAt: null,
+    });
+    world.leases = [{ sessionId: 's1', pid: 111, surface: 'desktop' }];
+    const h = buildScanner(world, [], 1, { emitStages: false });
+    h.setWatchAll(true);
+    h.scanner.start(); // immediate tick
+    h.tick(2);
+    expect(eventsOf(h.emitted, 'on_session_start')).toHaveLength(3); // retried each tick
+    expect(eventsOf(h.emitted, 'on_session_end')).toHaveLength(0); // never confirmed a refusal
+    expect(eventsOf(h.emitted, 'on_session_finalize')).toHaveLength(0); // and never reaped
   });
 
   it('never adopts twice, and stays quiet on idle ticks', () => {

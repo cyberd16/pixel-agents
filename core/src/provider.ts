@@ -171,6 +171,17 @@ export interface HookProvider {
    *  provider has no structured store (file-fallback roots cover it, or nothing). */
   directorySuggestions?(): { cwd: string; lastActiveMs: number }[];
 
+  /** Pathless sessions: a provider whose sessions can legitimately carry
+   *  NEITHER a transcript path NOR a working directory (Hermes' desktop
+   *  gateway rows store `cwd = NULL` and there is no per-session file) must
+   *  have a sessionStart without either STAGED as a pending external session
+   *  anyway — the ordinary `transcriptPath || cwd` staging gate exists to
+   *  filter a file provider's transient sessions, and without this opt-in it
+   *  would silently swallow the store scanner's birth two-beat, leaving the
+   *  session invisible forever. Undefined/false keeps the gate closed
+   *  (Claude's transient-session filter stays exactly as before). */
+  readonly stagesPathlessSessions?: boolean;
+
   /** Session-store scanner: the non-file twin of the heuristic mode above.
    *  A provider whose sessions live somewhere `fs.watch` cannot poll (a SQLite
    *  store plus a process registry) may expose this so the runtime gets the

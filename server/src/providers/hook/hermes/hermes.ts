@@ -448,6 +448,14 @@ export const hermesProvider: HookProvider = {
   //    the sessions table, the getAllSessionRoots-walk equivalent.
   createSessionScanner: (ctx: SessionScannerContext) => createHermesSessionScanner(ctx),
 
+  // Desktop-gateway rows carry `cwd = NULL` and Hermes has no transcript file,
+  // so the scanner's birth sessionStart arrives path-less. Without this opt-in
+  // the transient-session gate in hookEventHandler drops it before pending
+  // staging, the confirm beat finds an unknown session, and the desk stays
+  // empty forever (the cwd-NULL invisibility defect). Directory/Watch-All
+  // policy is enforced unchanged at confirmation time (onExternalSessionDetected).
+  stagesPathlessSessions: true,
+
   directorySuggestions(): { cwd: string; lastActiveMs: number }[] {
     // Short-lived open/close: the modal asks rarely, and pinning a read-only
     // handle across the app's lifetime buys nothing. Any failure (no store,

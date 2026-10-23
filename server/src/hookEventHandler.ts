@@ -263,7 +263,12 @@ export class HookEventHandler {
       // Unknown session -- store as pending, create only when a confirmation event
       // arrives (Stop, Notification, PermissionRequest). This filters transient sessions
       // from Claude Code Extension which fire SessionStart + SessionEnd without any activity.
-      if (transcriptPath || cwd) {
+      // Exception: providers that opt in via stagesPathlessSessions (Hermes) have
+      // sessions with neither a transcript nor a cwd (desktop-gateway rows carry
+      // `cwd = NULL`); the Directory/Watch-All policy is still enforced at
+      // confirmation by onExternalSessionDetected, so widening staging here adopts
+      // nothing the normal path would have refused.
+      if (transcriptPath || cwd || provider.stagesPathlessSessions) {
         // For --resume, clear dismissals so the file can be re-adopted
         if (normEvent.source === 'resume' && transcriptPath) {
           this.lifecycleCallbacks.onSessionResume?.(transcriptPath);

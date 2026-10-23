@@ -54,6 +54,9 @@ describe('hermesProvider', () => {
       expect(hermesProvider.getAllSessionRoots).toBeUndefined(); // fs walk would mis-adopt diversion JSONLs
       expect(hermesProvider.createSessionScanner).toBeTypeOf('function');
       expect(hermesProvider.directorySuggestions).toBeTypeOf('function');
+      // Path-less births (desktop rows store cwd = NULL) must still stage --
+      // see the scanner two-beat and hookEventHandler's transient filter.
+      expect(hermesProvider.stagesPathlessSessions).toBe(true);
       // The office can spawn Hermes sessions (push-only correlation rides the
       // minted session id, not a transcript file -- see buildLaunchCommand).
       expect(hermesProvider.buildLaunchCommand).toBeTypeOf('function');

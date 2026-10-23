@@ -317,6 +317,13 @@ export function createHermesSessionScanner(
         cwd: row.cwd,
         extra: { platform: row.source },
       });
+      // The emit is a REQUEST, not an acceptance: the office stages the birth
+      // synchronously (router pending counts as live), so isSessionLive right
+      // after the emit is the receipt that the session is in the pipeline. A
+      // refused birth must stay un-observed and be RETRIED next tick —
+      // marking observed on a refused attempt made the session invisible
+      // forever with no trace (the desktop-gateway cwd-NULL defect).
+      if (!ctx.isSessionLive(row.id)) return;
       watch.observed = true;
       watch.cursor = row.startedAtMs < serverStartMs ? (store?.latestMessageId(row.id) ?? 0) : 0;
       // The wire's confirmation beat: sessionStart alone only stages the
