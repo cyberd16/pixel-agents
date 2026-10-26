@@ -52,6 +52,7 @@ import { buildProviderCapabilities } from '../../server/src/providerCapabilities
 import type { ConsentEffects } from '../../server/src/providers/hook/consentExecutor.js';
 import { applyConsentChoice } from '../../server/src/providers/hook/consentExecutor.js';
 import { hooksConsentRequest } from '../../server/src/providers/hook/consentGate.js';
+import { setSilentSessionsShown } from '../../server/src/providers/hook/hermes/constants.js';
 import {
   claudeProvider,
   copyHookScript,
@@ -76,6 +77,7 @@ import {
   GLOBAL_KEY_HOOKS_INFO_SHOWN,
   GLOBAL_KEY_LAST_SEEN_VERSION,
   GLOBAL_KEY_SHOW_AREAS,
+  GLOBAL_KEY_SHOW_HERMES_SILENT_SESSIONS,
   GLOBAL_KEY_SHOW_HOST_DIRECTORIES,
   GLOBAL_KEY_SOUND_ENABLED,
   GLOBAL_KEY_WATCH_ALL_SESSIONS,
@@ -616,6 +618,10 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         const cfg = readConfig();
         cfg.vscode.areaMappings = mappings;
         writeConfig(cfg);
+      } else if (message.type === 'setShowHermesSilentSessions') {
+        const enabled = message.enabled as boolean;
+        this.adapter.setSetting(GLOBAL_KEY_SHOW_HERMES_SILENT_SESSIONS, enabled);
+        setSilentSessionsShown(enabled);
       } else if (message.type === 'setWatchAllSessions') {
         const enabled = message.enabled as boolean;
         this.adapter.setSetting(GLOBAL_KEY_WATCH_ALL_SESSIONS, enabled);
@@ -693,6 +699,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           false,
         );
         this.runtime.watchAllSessions.current = watchAllSessions;
+        const showHermesSilentSessions = this.adapter.getSetting<boolean>(
+          GLOBAL_KEY_SHOW_HERMES_SILENT_SESSIONS,
+          false,
+        );
+        setSilentSessionsShown(showHermesSilentSessions);
         // settingsLoaded.hooksEnabled stays a single boolean carrying the
         // CLAUDE provider's preference until the Settings UI grows a
         // per-provider list — its sole webview reader is the hooks tooltip.
@@ -714,6 +725,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           lastSeenVersion,
           extensionVersion,
           watchAllSessions,
+          showHermesSilentSessions,
           alwaysShowLabels,
           ghostHeadlessAgents,
           hooksEnabled,

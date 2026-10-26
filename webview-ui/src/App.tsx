@@ -103,6 +103,8 @@ function App() {
     extensionVersion,
     watchAllSessions,
     setWatchAllSessions,
+    showHermesSilentSessions,
+    setShowHermesSilentSessions,
     alwaysShowLabels,
     ghostHeadlessAgents,
     setGhostHeadlessAgents,
@@ -873,6 +875,12 @@ function App() {
           const newVal = !watchAllSessions;
           setWatchAllSessions(newVal);
           transport.send({ type: 'setWatchAllSessions', enabled: newVal });
+        }}
+        showHermesSilentSessions={showHermesSilentSessions}
+        onToggleShowHermesSilentSessions={() => {
+          const newVal = !showHermesSilentSessions;
+          setShowHermesSilentSessions(newVal);
+          transport.send({ type: 'setShowHermesSilentSessions', enabled: newVal });
         }}
         hookProviderRows={hookProviderRows}
         onToggleHooks={(providerId: string, installed: boolean) => {

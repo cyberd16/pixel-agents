@@ -64,6 +64,7 @@ export type ClientMessage =
   | HooksConsentResponse
   | SetHooksInfoShown
   | SetWatchAllSessions
+  | SetShowHermesSilentSessions
   | ExportLayout
   | ImportLayout
   | OpenSessionsFolder
@@ -295,6 +296,7 @@ export interface SettingsLoaded {
   lastSeenVersion: string;
   extensionVersion: string;
   watchAllSessions: boolean;
+  showHermesSilentSessions: boolean;
   alwaysShowLabels: boolean;
   ghostHeadlessAgents: boolean;
   hooksEnabled: boolean;
@@ -466,6 +468,11 @@ export interface SetHooksInfoShown {
 
 export interface SetWatchAllSessions {
   type: 'setWatchAllSessions';
+  enabled: boolean;
+}
+
+export interface SetShowHermesSilentSessions {
+  type: 'setShowHermesSilentSessions';
   enabled: boolean;
 }
 

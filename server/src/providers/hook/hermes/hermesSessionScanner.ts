@@ -56,11 +56,11 @@ import {
   HERMES_SCANNER_REAP_REASON,
   HERMES_SCANNER_REAP_TOMBSTONES,
   HERMES_SCANNER_REPLAY_LIMIT,
-  HERMES_SCANNER_SILENT_SOURCES,
   HERMES_SCANNER_SUBAGENT_END_EVENT,
   HERMES_SCANNER_SUBAGENT_START_EVENT,
   HERMES_SCANNER_SUBAGENT_TITLE_MAX,
   HERMES_SUBAGENT_TITLE_PREFIX,
+  isSilentSource,
 } from './constants.js';
 import { getHermesHome } from './hermesHookInstaller.js';
 import {
@@ -218,7 +218,7 @@ export function createHermesSessionScanner(
   }
 
   function adoptEligible(row: HermesSessionRecord, leaseBySession: Map<string, number>): boolean {
-    if (HERMES_SCANNER_SILENT_SOURCES.has(row.source)) return false;
+    if (isSilentSource(row.source)) return false;
     const pid = leaseBySession.get(row.id);
     if (pid === undefined || !deps.pidAlive(pid)) return false;
     return ctx.isAdoptableDir(row.cwd);
@@ -372,7 +372,7 @@ export function createHermesSessionScanner(
     // works.
     const parentOnDesk = ctx.isSessionLive(parentId) || (watches.get(parentId)?.observed ?? false);
     if (!parentOnDesk) return;
-    if (HERMES_SCANNER_SILENT_SOURCES.has(row.source)) return;
+    if (isSilentSource(row.source)) return;
     ctx.emit({
       hook_event_name: HERMES_SCANNER_SUBAGENT_START_EVENT,
       session_id: parentId,

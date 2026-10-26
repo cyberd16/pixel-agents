@@ -55,8 +55,8 @@ import {
   HERMES_SCANNER_SUBAGENT_END_EVENT,
   HERMES_SCANNER_SUBAGENT_START_EVENT,
   HERMES_SCANNER_SUGGESTION_LIMIT,
-  HERMES_SILENT_PLATFORMS,
   HERMES_TERMINAL_NAME_PREFIX,
+  isSilentSource,
 } from './constants.js';
 import {
   areHooksInstalled,
@@ -134,8 +134,8 @@ function platformOf(raw: Record<string, unknown>): string | undefined {
 }
 
 function isSilentSession(raw: Record<string, unknown>): boolean {
-  const p = platformOf(raw);
-  return p !== undefined && HERMES_SILENT_PLATFORMS.has(p);
+  // One predicate with the store scanner: the opt-in Settings row flips both.
+  return isSilentSource(platformOf(raw));
 }
 
 const positiveInt = (v: unknown): number | undefined =>

@@ -146,6 +146,7 @@ components:
         - $ref: '#/components/schemas/HooksConsentResponse'
         - $ref: '#/components/schemas/SetHooksInfoShown'
         - $ref: '#/components/schemas/SetWatchAllSessions'
+        - $ref: '#/components/schemas/SetShowHermesSilentSessions'
         - $ref: '#/components/schemas/ExportLayout'
         - $ref: '#/components/schemas/ImportLayout'
         - $ref: '#/components/schemas/OpenSessionsFolder'
@@ -704,6 +705,7 @@ components:
         - watchAllSessions
         - alwaysShowLabels
         - ghostHeadlessAgents
+        - showHermesSilentSessions
         - hooksEnabled
         - hooksInfoShown
         - externalAssetDirectories
@@ -720,6 +722,8 @@ components:
         extensionVersion:
           type: string
         watchAllSessions:
+          type: boolean
+        showHermesSilentSessions:
           type: boolean
         alwaysShowLabels:
           type: boolean
@@ -1208,6 +1212,21 @@ components:
       properties:
         type:
           const: setWatchAllSessions
+        enabled:
+          type: boolean
+
+    SetShowHermesSilentSessions:
+      description: >-
+        Opt into seeing the sessions Hermes marks as silent sources
+        (cron, batch, oneshot, unknown) as characters. Per surface, like every
+        other setting. 'subagent' is NOT covered: those children already render
+        as Subtask sub-characters, so the switch would double-render them.
+      type: object
+      additionalProperties: false
+      required: [type, enabled]
+      properties:
+        type:
+          const: setShowHermesSilentSessions
         enabled:
           type: boolean
 

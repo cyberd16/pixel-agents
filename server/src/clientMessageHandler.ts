@@ -25,6 +25,7 @@ import { buildProviderCapabilities } from './providerCapabilities.js';
 import type { ConsentEffects } from './providers/hook/consentExecutor.js';
 import { applyConsentChoice } from './providers/hook/consentExecutor.js';
 import { hooksConsentRequest } from './providers/hook/consentGate.js';
+import { setSilentSessionsShown } from './providers/hook/hermes/constants.js';
 import { claudeProvider, hookProviderById, hookProviders } from './providers/index.js';
 import type { PtySessionManager } from './terminal/ptySessionManager.js';
 import type { resolveLaunchCommand } from './terminal/resolveLaunchCommand.js';
@@ -88,6 +89,7 @@ const KEY_LAST_SEEN_VERSION = 'pixel-agents.lastSeenVersion';
 const KEY_ALWAYS_SHOW_LABELS = 'pixel-agents.alwaysShowLabels';
 const KEY_GHOST_HEADLESS_AGENTS = 'pixel-agents.ghostHeadlessAgents';
 const KEY_WATCH_ALL_SESSIONS = 'pixel-agents.watchAllSessions';
+const KEY_SHOW_HERMES_SILENT_SESSIONS = 'pixel-agents.showHermesSilentSessions';
 const KEY_HOOKS_INFO_SHOWN = 'pixel-agents.hooksInfoShown';
 const KEY_SHOW_AREAS = 'pixel-agents.showAreas';
 const KEY_BYPASS_PERMISSIONS = 'pixel-agents.bypassPermissions';
@@ -275,6 +277,16 @@ export function handleClientMessage(
       const enabled = msg.enabled as boolean;
       adapter?.setSetting(KEY_WATCH_ALL_SESSIONS, enabled);
       if (runtime) runtime.watchAllSessions.current = enabled;
+      break;
+    }
+
+    case 'setShowHermesSilentSessions': {
+      // Persisted per surface, applied immediately: the provider ref it flips is
+      // the same one the wire gate and the store scanner read, so an already
+      // silent cron character needs no re-scan to become visible on the next tick.
+      const enabled = msg.enabled as boolean;
+      adapter?.setSetting(KEY_SHOW_HERMES_SILENT_SESSIONS, enabled);
+      setSilentSessionsShown(enabled);
       break;
     }
 
@@ -694,6 +706,7 @@ function settingsSnapshot(adapter: StateAdapter | undefined) {
     lastSeenVersion: adapter?.getSetting(KEY_LAST_SEEN_VERSION, '') ?? '',
     extensionVersion: process.env.PIXEL_AGENTS_VERSION ?? '',
     watchAllSessions: adapter?.getSetting(KEY_WATCH_ALL_SESSIONS, false) ?? false,
+    showHermesSilentSessions: adapter?.getSetting(KEY_SHOW_HERMES_SILENT_SESSIONS, false) ?? false,
     alwaysShowLabels: adapter?.getSetting(KEY_ALWAYS_SHOW_LABELS, false) ?? false,
     ghostHeadlessAgents: adapter?.getSetting(KEY_GHOST_HEADLESS_AGENTS, false) ?? false,
     // A single boolean carrying the CLAUDE provider's preference until the
@@ -743,6 +756,7 @@ function refuseReadOnly(
     case 'setAlwaysShowLabels':
     case 'setGhostHeadlessAgents':
     case 'setWatchAllSessions':
+    case 'setShowHermesSilentSessions':
     case 'setShowAreas':
     case 'setBypassPermissions':
     case 'setShowHostDirectories':

@@ -157,6 +157,37 @@ export const HERMES_SCANNER_SILENT_SOURCES: ReadonlySet<string> = new Set([
   'unknown',
 ]);
 
+/** The union of both silent gates MINUS 'subagent'. An operator can opt into
+ *  seeing scheduled/transient/unattributable runs; they cannot opt into a
+ *  delegate_task child as a second full character, because the child fires its
+ *  own lifecycle on the wire while the scanner already renders it as a Subtask
+ *  sub-character under its parent — the toggle would double-render it, not
+ *  reveal something hidden. So 'subagent' stays structural, outside the switch. */
+export const HERMES_TOGGLEABLE_SILENT_SOURCES: ReadonlySet<string> = new Set(
+  [...HERMES_SILENT_PLATFORMS, ...HERMES_SCANNER_SILENT_SOURCES].filter((s) => s !== 'subagent'),
+);
+
+/** Provider-owned visibility ref, the Hermes counterpart of the runtime's
+ *  `watchAllSessions`: the SETTING persists per surface (config.json namespaces
+ *  `vscode`/`standalone`), the DROP decision stays a provider concern. Read by
+ *  ONE predicate both gates share, so the wire (platform) and the store (source)
+ *  can never disagree about what "silent" means. */
+let silentSessionsShown = false;
+
+export function setSilentSessionsShown(show: boolean): void {
+  silentSessionsShown = show;
+}
+
+export function areSilentSessionsShown(): boolean {
+  return silentSessionsShown;
+}
+
+export function isSilentSource(value: string | undefined): boolean {
+  if (!value) return false;
+  if (value === 'subagent') return true;
+  return HERMES_TOGGLEABLE_SILENT_SOURCES.has(value) && !silentSessionsShown;
+}
+
 /** Grace before a desk-held session with NO lease row at all is treated as
  *  dead. While a Hermes process lives it keeps its lease, and Hermes' own
  *  registry janitor prunes entries whose pid is gone — so an absent lease on

@@ -10,6 +10,8 @@
 
 ### Changes
 
+- **Show Hermes cron/batch/… (opt-in)** ([#438](https://github.com/pixel-agents-hq/pixel-agents/pull/438)) — scheduled (`cron`, `batch`), transient (`oneshot`) and unattributable (`unknown`) Hermes runs were never characters and never could be seen; a Settings row, stored per surface like every other setting, opts into drawing them. `subagent` is deliberately outside the switch: those children already render as Subtask sub-characters, so opening the wire for them would double-render rather than reveal.
+
 - **Hook payloads cap at 1 MB, not 64 KB** ([#438](https://github.com/pixel-agents-hq/pixel-agents/pull/438)) — a `post_tool_call` carries the tool result; terminal-heavy sessions reached 200–600 KB and the event was rejected and lost forever, taking the session's confirm beat with it.
 
 ### Fixes

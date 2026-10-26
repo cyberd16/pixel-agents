@@ -118,6 +118,9 @@ interface ExtensionMessageState {
   extensionVersion: string;
   watchAllSessions: boolean;
   setWatchAllSessions: (v: boolean) => void;
+  /** Hermes silent sources (cron/batch/oneshot/unknown) rendered as characters. */
+  showHermesSilentSessions: boolean;
+  setShowHermesSilentSessions: (v: boolean) => void;
   alwaysShowLabels: boolean;
   ghostHeadlessAgents: boolean;
   setGhostHeadlessAgents: (v: boolean) => void;
@@ -210,6 +213,7 @@ export function useExtensionMessages(
   const [lastSeenVersion, setLastSeenVersion] = useState('');
   const [extensionVersion, setExtensionVersion] = useState('');
   const [watchAllSessions, setWatchAllSessions] = useState(false);
+  const [showHermesSilentSessions, setShowHermesSilentSessions] = useState(false);
   const [alwaysShowLabels, setAlwaysShowLabels] = useState(false);
   const [ghostHeadlessAgents, setGhostHeadlessAgentsState] = useState(false);
   const [hooksEnabled, setHooksEnabled] = useState(true);
@@ -783,6 +787,9 @@ export function useExtensionMessages(
         if (typeof msg.watchAllSessions === 'boolean') {
           setWatchAllSessions(msg.watchAllSessions as boolean);
         }
+        if (typeof msg.showHermesSilentSessions === 'boolean') {
+          setShowHermesSilentSessions(msg.showHermesSilentSessions as boolean);
+        }
         if (typeof msg.alwaysShowLabels === 'boolean') {
           setAlwaysShowLabels(msg.alwaysShowLabels as boolean);
         }
@@ -925,6 +932,8 @@ export function useExtensionMessages(
     extensionVersion,
     watchAllSessions,
     setWatchAllSessions,
+    showHermesSilentSessions,
+    setShowHermesSilentSessions,
     alwaysShowLabels,
     ghostHeadlessAgents,
     setGhostHeadlessAgents: applyGhostHeadlessAgents,
